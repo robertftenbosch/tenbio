@@ -50,3 +50,62 @@ export async function fetchPartPapers(id: string): Promise<PapersResponse> {
 
   return response.json()
 }
+
+export interface PartCreateData {
+  name: string
+  type: string
+  description?: string | null
+  sequence: string
+  organism?: string | null
+  source?: string | null
+}
+
+export interface PartUpdateData {
+  name?: string
+  type?: string
+  description?: string | null
+  sequence?: string
+  organism?: string | null
+  source?: string | null
+}
+
+export async function createPart(data: PartCreateData): Promise<Part> {
+  const response = await fetch(`${API_BASE}/parts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || 'Failed to create part')
+  }
+
+  return response.json()
+}
+
+export async function updatePart(id: string, data: PartUpdateData): Promise<Part> {
+  const response = await fetch(`${API_BASE}/parts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || 'Failed to update part')
+  }
+
+  return response.json()
+}
+
+export async function deletePart(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/parts/${id}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }))
+    throw new Error(error.detail || 'Failed to delete part')
+  }
+}
