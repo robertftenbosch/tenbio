@@ -6,6 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Tenbio is a **Metabolic Pathway Designer** - a web application for synthetic biology researchers to design genetic constructs for protein production in microorganisms. The project is currently in the planning/architecture phase with no implementation code yet.
 
+## Long-Term Vision
+
+The ultimate goal of Tenbio extends beyond pathway design into **synthetic cell engineering** for solving major societal challenges. The platform aims to enable the design of synthetic cells that harness bacterial processes powered by sunlight and nutrients to produce valuable compounds or break down harmful substances.
+
+### Dream Applications
+
+1. **Nitrogen Crisis Solution** - Engineer organisms that can process agricultural waste and manure surpluses (particularly relevant for the Netherlands' nitrogen crisis) by converting excess nitrogen into harmless or useful compounds
+
+2. **Medical Bioproduction** - Design synthetic cells capable of producing blood plasma components for patients in need, reducing dependency on human donors
+
+3. **Green Hydrogen Production** - Create photosynthetic organisms that efficiently convert sunlight and water into hydrogen gas as a sustainable energy source
+
+### Enabling Technologies (Future Roadmap)
+
+- **Photosynthetic pathway integration** - Import and optimize cyanobacterial/algal light-harvesting systems
+- **Minimal cell chassis** - Design stripped-down synthetic cells optimized for specific production tasks
+- **Metabolic flux optimization** - Model and optimize energy/nutrient flow for maximum output
+- **Biosafety containment** - Built-in genetic safeguards for environmental release scenarios
+
+These long-term goals inform the architecture decisions made today, ensuring the platform can scale from single protein production to complex multi-pathway synthetic organisms.
+
 ## Planned Architecture
 
 ```
@@ -86,7 +107,7 @@ The ML layer uses ESM-3 (EvolutionaryScale) for advanced protein engineering:
 - **Pathway**: A sequence of genes and regulatory parts to produce a target protein
 - **Genetic Parts**: Promoters, RBS, terminators, genes (using BioBricks/iGEM conventions like BBa_J23100)
 - **Codon Optimization**: Adapting DNA sequences for host organism codon usage
-- **Host Organisms**: E. coli (BL21), yeast - each has different codon preferences and available enzymes
+- **Host Organisms**: E. coli (BL21), yeast, cyanobacteria (Synechocystis), algae (Chlamydomonas) - each has different codon preferences, available enzymes, and metabolic capabilities (photosynthesis for cyanobacteria/algae)
 - **SBOL/GenBank**: Standard export formats for synthetic biology
 
 ## API Conventions (Planned)
