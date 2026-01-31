@@ -20,6 +20,10 @@ Een webapplicatie waarmee synbio-onderzoekers genetische constructen kunnen ontw
 │  │ /design       │  │ /simulate     │  │ /export       │        │
 │  │ endpoints     │  │ endpoints     │  │ endpoints     │        │
 │  └───────────────┘  └───────────────┘  └───────────────┘        │
+│  ┌───────────────┐                                               │
+│  │ /ml           │  ← ESM-3 protein design endpoints             │
+│  │ endpoints     │                                               │
+│  └───────────────┘                                               │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -28,6 +32,15 @@ Een webapplicatie waarmee synbio-onderzoekers genetische constructen kunnen ontw
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
 │  │ Pathway     │ │ Sequence    │ │ Simulation  │ │ Parts     │  │
 │  │ Engine      │ │ Optimizer   │ │ Engine      │ │ Registry  │  │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     GPU/ML LAYER (A6000 48GB)                    │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
+│  │ ESM-3       │ │ Structure   │ │ Embedding   │ │ Expression│  │
+│  │ Service     │ │ Predictor   │ │ Service     │ │ Predictor │  │
 │  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -121,6 +134,15 @@ POST   /api/v1/export/protocol         # Genereer lab protocol
 GET    /api/v1/projects                # Lijst projecten
 POST   /api/v1/projects                # Nieuw project
 GET    /api/v1/projects/{id}           # Project details
+
+# ML/ESM-3 (GPU-accelerated)
+POST   /api/v1/ml/structure            # Voorspel 3D structuur
+POST   /api/v1/ml/variants             # Genereer geoptimaliseerde varianten
+POST   /api/v1/ml/scaffold             # Motif scaffolding
+POST   /api/v1/ml/inverse-fold         # Structuur → sequentie
+POST   /api/v1/ml/embedding            # Genereer protein embedding
+GET    /api/v1/ml/similar/{id}         # Vind vergelijkbare eiwitten
+POST   /api/v1/ml/expression           # Voorspel expressieniveau
 ```
 
 ### Request/Response Voorbeeld
@@ -361,6 +383,300 @@ class GeneticPart(Base):
     success_rate = Column(Float)
 ```
 
+### 3.5 ESM-3 ML Service (GPU)
+
+Machine learning service voor geavanceerde eiwit-analyse en -design, draaiend op NVIDIA A6000 (48GB VRAM).
+
+```python
+# ml_service/esm3_service.py
+
+from esm.models.esm3 import ESM3
+from esm.sdk.api import ESMProtein, GenerationConfig
+import torch
+
+class ESM3Service:
+    """
+    ESM-3 integratie voor protein engineering.
+
+    Hardware: NVIDIA A6000 (48GB VRAM)
+    Model: ESM3-open (small) - ~8-12GB VRAM
+    Licentie: Non-commercial (ESM3-open)
+    """
+
+    def __init__(self):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = ESM3.from_pretrained("esm3_sm_open_v1").to(self.device)
+
+    def predict_structure(self, sequence: str) -> ProteinStructure:
+        """
+        Voorspel 3D structuur van eiwit.
+        Vervangt aparte ESMFold call.
+        """
+        protein = ESMProtein(sequence=sequence)
+        config = GenerationConfig(track="structure", num_steps=10)
+        result = self.model.generate(protein, config)
+        return ProteinStructure(
+            pdb=result.to_pdb_string(),
+            confidence=result.ptm,
+            per_residue_confidence=result.plddt
+        )
+
+    def generate_variants(
+        self,
+        sequence: str,
+        constraints: dict,
+        num_variants: int = 5
+    ) -> list[ProteinVariant]:
+        """
+        Genereer geoptimaliseerde eiwitvarianten.
+
+        Constraints kunnen zijn:
+        - preserve_regions: [(start, end), ...] - behoud deze regio's
+        - optimize_for: ["solubility", "stability", "expression"]
+        - avoid_epitopes: [...] - vermijd allergene epitopen
+        """
+        protein = ESMProtein(sequence=sequence)
+
+        # Mask posities die geoptimaliseerd mogen worden
+        if constraints.get("preserve_regions"):
+            mask = self._create_preservation_mask(
+                sequence,
+                constraints["preserve_regions"]
+            )
+            protein = protein.with_mask(mask)
+
+        variants = []
+        for _ in range(num_variants):
+            config = GenerationConfig(
+                track="sequence",
+                num_steps=16,
+                temperature=0.7
+            )
+            variant = self.model.generate(protein, config)
+
+            # Evalueer variant
+            score = self._evaluate_variant(
+                variant,
+                constraints.get("optimize_for", [])
+            )
+            variants.append(ProteinVariant(
+                sequence=variant.sequence,
+                mutations=self._get_mutations(sequence, variant.sequence),
+                predicted_improvements=score
+            ))
+
+        return sorted(variants, key=lambda v: v.predicted_improvements, reverse=True)
+
+    def scaffold_motif(
+        self,
+        motif_sequence: str,
+        motif_structure: str,
+        scaffold_length: int = 100
+    ) -> list[ProteinDesign]:
+        """
+        Ontwerp nieuw eiwit rondom een functioneel motief.
+
+        Gebruik: behoud actief centrum maar ontwerp nieuwe scaffold
+        voor betere stabiliteit of expressie.
+        """
+        # Creëer prompt met structuur constraint voor motief
+        protein = ESMProtein.from_pdb(motif_structure)
+
+        # Extend met masked residues
+        protein = protein.extend_with_mask(
+            n_terminal=scaffold_length // 2,
+            c_terminal=scaffold_length // 2
+        )
+
+        config = GenerationConfig(
+            track="sequence",
+            num_steps=32,
+            temperature=0.5  # Lager voor meer conservatief design
+        )
+
+        designs = []
+        for _ in range(3):
+            result = self.model.generate(protein, config)
+            designs.append(ProteinDesign(
+                sequence=result.sequence,
+                structure=result.to_pdb_string(),
+                motif_preserved=self._verify_motif(result, motif_sequence)
+            ))
+
+        return designs
+
+    def inverse_fold(self, structure_pdb: str) -> list[str]:
+        """
+        Van 3D structuur naar optimale aminozuursequentie.
+
+        Gebruik: gegeven een gewenste vouwing, vind de beste
+        sequentie die stabiel is in de host.
+        """
+        protein = ESMProtein.from_pdb(structure_pdb)
+        protein = protein.with_masked_sequence()  # Mask alle residues
+
+        config = GenerationConfig(
+            track="sequence",
+            num_steps=16
+        )
+
+        sequences = []
+        for temp in [0.3, 0.5, 0.7]:  # Verschillende temperaturen
+            config.temperature = temp
+            result = self.model.generate(protein, config)
+            sequences.append(result.sequence)
+
+        return sequences
+
+    def get_embedding(self, sequence: str) -> torch.Tensor:
+        """
+        Genereer protein embedding voor similarity search.
+
+        Gebruik met FAISS voor snelle vector search over
+        parts library of UniProt.
+        """
+        protein = ESMProtein(sequence=sequence)
+        with torch.no_grad():
+            embedding = self.model.encode(protein)
+        return embedding.mean(dim=0)  # Pool over residues
+
+    def predict_expression(
+        self,
+        sequence: str,
+        host: str
+    ) -> ExpressionPrediction:
+        """
+        Voorspel expressieniveau gebaseerd op eiwit eigenschappen.
+
+        Combineert ESM-3 structuur predictie met host-specifieke
+        analyse (aggregatie, toxiciteit, metabole burden).
+        """
+        structure = self.predict_structure(sequence)
+
+        # Analyseer problematische eigenschappen
+        aggregation_prone = self._predict_aggregation(structure)
+        has_rare_folds = self._check_rare_folds(structure, host)
+
+        return ExpressionPrediction(
+            predicted_yield=self._estimate_yield(
+                aggregation_prone,
+                has_rare_folds
+            ),
+            bottlenecks=self._identify_bottlenecks(structure, host),
+            recommendations=self._generate_recommendations(
+                sequence,
+                structure,
+                host
+            )
+        )
+
+
+# Pydantic models voor type safety
+from pydantic import BaseModel
+
+class ProteinStructure(BaseModel):
+    pdb: str
+    confidence: float  # pTM score
+    per_residue_confidence: list[float]  # pLDDT per residue
+
+class ProteinVariant(BaseModel):
+    sequence: str
+    mutations: list[str]  # ["A23V", "K45R", ...]
+    predicted_improvements: dict[str, float]
+
+class ProteinDesign(BaseModel):
+    sequence: str
+    structure: str  # PDB format
+    motif_preserved: bool
+
+class ExpressionPrediction(BaseModel):
+    predicted_yield: float  # mg/L
+    bottlenecks: list[str]
+    recommendations: list[str]
+```
+
+### 3.6 Embedding & Vector Search Service
+
+Snelle similarity search over eiwitten en genetische onderdelen.
+
+```python
+# ml_service/embedding_service.py
+
+import faiss
+import numpy as np
+from typing import Optional
+
+class EmbeddingService:
+    """
+    Vector similarity search met FAISS (GPU-accelerated).
+
+    Gebruikt ESM-3 embeddings voor semantische zoektocht
+    over eiwitten en genetische onderdelen.
+    """
+
+    def __init__(self, esm3_service: ESM3Service):
+        self.esm3 = esm3_service
+        self.dimension = 1536  # ESM-3 embedding dimensie
+
+        # GPU-accelerated FAISS index
+        res = faiss.StandardGpuResources()
+        self.index = faiss.GpuIndexFlatIP(res, self.dimension)
+
+        self.id_mapping: dict[int, str] = {}  # FAISS idx → protein ID
+
+    def index_protein(self, protein_id: str, sequence: str):
+        """Voeg eiwit toe aan vector index."""
+        embedding = self.esm3.get_embedding(sequence)
+        embedding_np = embedding.cpu().numpy().reshape(1, -1)
+
+        # Normaliseer voor cosine similarity
+        faiss.normalize_L2(embedding_np)
+
+        idx = self.index.ntotal
+        self.index.add(embedding_np)
+        self.id_mapping[idx] = protein_id
+
+    def search_similar(
+        self,
+        query_sequence: str,
+        k: int = 10,
+        min_similarity: float = 0.5
+    ) -> list[tuple[str, float]]:
+        """
+        Vind vergelijkbare eiwitten.
+
+        Returns: [(protein_id, similarity_score), ...]
+        """
+        query_embedding = self.esm3.get_embedding(query_sequence)
+        query_np = query_embedding.cpu().numpy().reshape(1, -1)
+        faiss.normalize_L2(query_np)
+
+        scores, indices = self.index.search(query_np, k)
+
+        results = []
+        for score, idx in zip(scores[0], indices[0]):
+            if score >= min_similarity and idx in self.id_mapping:
+                results.append((self.id_mapping[idx], float(score)))
+
+        return results
+
+    def semantic_search(
+        self,
+        query: str,
+        protein_type: Optional[str] = None
+    ) -> list[tuple[str, float]]:
+        """
+        Semantische zoektocht met natural language query.
+
+        Voorbeeld: "thermostabiel enzym voor hoge temperatuur"
+
+        Note: Vereist text-to-protein embedding model of
+        vooraf gedefinieerde query templates.
+        """
+        # TODO: Implementeer met text encoder
+        pass
+```
+
 ---
 
 ## 4. Data Layer
@@ -499,6 +815,29 @@ services:
       - db
       - redis
 
+  # GPU Worker voor ML taken (ESM-3, embeddings, etc.)
+  ml_worker:
+    build: ./api
+    command: celery -A ml_tasks worker --loglevel=info -Q ml_queue
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/pathway_designer
+      - REDIS_URL=redis://redis:6379
+      - CUDA_VISIBLE_DEVICES=0
+      - ESM3_MODEL=esm3_sm_open_v1
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./api:/app
+      - esm_model_cache:/root/.cache/huggingface  # Cache ESM-3 weights
+
   db:
     image: postgres:15
     environment:
@@ -516,6 +855,46 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  esm_model_cache:  # Persistent cache voor ESM-3 model weights
+```
+
+---
+
+## 5.1 GPU Server Specificaties
+
+**Hardware:** NVIDIA A6000 (48GB VRAM)
+
+### VRAM Allocatie
+
+| Model/Service | VRAM Usage | Concurrent |
+|--------------|------------|------------|
+| ESM-3 (small) | ~8-12GB | Ja |
+| FAISS GPU Index | ~2-4GB | Ja |
+| Batch inference buffer | ~8GB | - |
+| **Totaal actief** | **~20-24GB** | - |
+| **Beschikbaar voor grote batches** | **~24GB** | - |
+
+### Configuratie
+
+```yaml
+# ml_config.yaml
+
+esm3:
+  model: "esm3_sm_open_v1"
+  device: "cuda:0"
+  max_sequence_length: 2048
+  batch_size: 4
+  cache_embeddings: true
+
+faiss:
+  use_gpu: true
+  index_type: "IVF4096,Flat"  # Voor grote datasets
+  nprobe: 64
+
+inference:
+  max_concurrent_requests: 4
+  timeout_seconds: 300
+  queue: "ml_queue"
 ```
 
 ---
@@ -548,6 +927,14 @@ volumes:
 - [ ] Lab protocol generator
 - [ ] Team collaboration features
 
+### Fase 4 (6+ maanden): ML-Enhanced Design
+
+- [ ] ESM-3 structuurvoorspelling integratie
+- [ ] Automatische variant generatie voor betere expressie
+- [ ] Motif scaffolding voor enzyme engineering
+- [ ] Semantische zoektocht over parts library
+- [ ] Expression level prediction met ML
+
 ---
 
 ## 7. Tech Keuzes Samengevat
@@ -561,6 +948,9 @@ volumes:
 | Queue | Redis + Celery | Async simulaties |
 | Auth | JWT + API keys | Simpel, standaard |
 | Deployment | Docker + fly.io of Railway | Makkelijk starten |
+| **ML/AI** | **ESM-3** | **Multimodaal protein LM (seq+struct+func)** |
+| **GPU** | **NVIDIA A6000 (48GB)** | **Ruim voor ESM-3 + FAISS + batching** |
+| **Vector Search** | **FAISS GPU** | **Snelle similarity search** |
 
 ---
 
@@ -597,6 +987,29 @@ pyyaml==6.0.1
 python-jose==3.3.0     # JWT
 ```
 
+```txt
+# api/requirements-ml.txt (GPU worker)
+
+# PyTorch met CUDA support
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.2.0+cu121
+
+# ESM-3 (EvolutionaryScale)
+esm>=3.0.0             # ESM-3 models
+
+# Vector search
+faiss-gpu==1.7.4       # GPU-accelerated similarity search
+
+# ML utilities
+transformers>=4.36.0   # Hugging Face ecosystem
+accelerate>=0.25.0     # Model loading optimization
+safetensors>=0.4.0     # Fast model weight loading
+
+# Numeriek
+numpy>=1.24.0
+scipy>=1.11.0
+```
+
 ---
 
 ## Volgende Stap
@@ -607,3 +1020,5 @@ Wil je dat ik een van deze onderdelen verder uitwerk? Bijvoorbeeld:
 2. **API scaffold** - FastAPI project met basis endpoints
 3. **Codon optimizer** - Werkende Python module
 4. **Database seeding** - Script om parts registry te vullen met iGEM data
+5. **ESM-3 service** - GPU worker met protein design capabilities
+6. **Vector search setup** - FAISS index voor parts/protein similarity
