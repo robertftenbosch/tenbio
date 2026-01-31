@@ -15,6 +15,15 @@ class PartCreate(PartBase):
     pass
 
 
+class PartUpdate(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    description: str | None = None
+    sequence: str | None = None
+    organism: str | None = None
+    source: str | None = None
+
+
 class PartResponse(PartBase):
     id: str
     created_at: datetime

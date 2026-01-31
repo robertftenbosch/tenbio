@@ -4,7 +4,7 @@ from sqlalchemy import or_
 
 from app.database import get_db
 from app.models.parts import Part
-from app.schemas.parts import PartResponse, PartListResponse, PartCreate, PapersListResponse
+from app.schemas.parts import PartResponse, PartListResponse, PartCreate, PartUpdate, PapersListResponse
 from app.external_apis.pubmed import search_papers_for_part
 
 router = APIRouter(prefix="/api/v1/parts", tags=["parts"])
@@ -58,6 +58,39 @@ def create_part(part: PartCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_part)
     return db_part
+
+
+@router.put("/{part_id}", response_model=PartResponse)
+def update_part(part_id: str, part_update: PartUpdate, db: Session = Depends(get_db)):
+    db_part = db.query(Part).filter(Part.id == part_id).first()
+    if not db_part:
+        raise HTTPException(status_code=404, detail="Part not found")
+
+    # Check for name conflict if name is being updated
+    if part_update.name and part_update.name != db_part.name:
+        existing = db.query(Part).filter(Part.name == part_update.name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Part with this name already exists")
+
+    # Update only provided fields
+    update_data = part_update.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(db_part, field, value)
+
+    db.commit()
+    db.refresh(db_part)
+    return db_part
+
+
+@router.delete("/{part_id}", status_code=204)
+def delete_part(part_id: str, db: Session = Depends(get_db)):
+    db_part = db.query(Part).filter(Part.id == part_id).first()
+    if not db_part:
+        raise HTTPException(status_code=404, detail="Part not found")
+
+    db.delete(db_part)
+    db.commit()
+    return None
 
 
 @router.get("/{part_id}/papers", response_model=PapersListResponse)

@@ -3,6 +3,7 @@ import { Part } from '../../types/parts'
 interface PartCardProps {
   part: Part
   onClick?: () => void
+  onEdit?: () => void
   draggable?: boolean
   onDragStart?: (e: React.DragEvent) => void
 }
@@ -21,8 +22,13 @@ const TYPE_LABELS: Record<string, string> = {
   gene: 'Gene',
 }
 
-export function PartCard({ part, onClick, draggable, onDragStart }: PartCardProps) {
+export function PartCard({ part, onClick, onEdit, draggable, onDragStart }: PartCardProps) {
   const colors = TYPE_COLORS[part.type] || { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' }
+
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onEdit?.()
+  }
 
   return (
     <div
@@ -33,9 +39,22 @@ export function PartCard({ part, onClick, draggable, onDragStart }: PartCardProp
     >
       <div className="flex items-start justify-between gap-2">
         <h3 className="font-mono font-semibold text-gray-900">{part.name}</h3>
-        <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors.text} ${colors.bg} border ${colors.border}`}>
-          {TYPE_LABELS[part.type] || part.type}
-        </span>
+        <div className="flex items-center gap-1">
+          {onEdit && (
+            <button
+              onClick={handleEditClick}
+              className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+              title="Edit part"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+          )}
+          <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors.text} ${colors.bg} border ${colors.border}`}>
+            {TYPE_LABELS[part.type] || part.type}
+          </span>
+        </div>
       </div>
 
       {part.description && (

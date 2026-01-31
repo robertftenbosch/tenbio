@@ -5,6 +5,7 @@ import { fetchPartPapers } from '../../api/parts'
 interface PartDetailModalProps {
   part: Part
   onClose: () => void
+  onEdit?: () => void
 }
 
 const TYPE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -21,7 +22,7 @@ const TYPE_LABELS: Record<string, string> = {
   gene: 'Gene',
 }
 
-export function PartDetailModal({ part, onClose }: PartDetailModalProps) {
+export function PartDetailModal({ part, onClose, onEdit }: PartDetailModalProps) {
   const [papers, setPapers] = useState<Paper[]>([])
   const [loadingPapers, setLoadingPapers] = useState(true)
   const [copied, setCopied] = useState(false)
@@ -74,14 +75,27 @@ export function PartDetailModal({ part, onClose }: PartDetailModalProps) {
                 <p className="mt-2 text-gray-600">{part.description}</p>
               )}
             </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-2">
+              {onEdit && (
+                <button
+                  onClick={onEdit}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                  Edit
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Metadata */}
