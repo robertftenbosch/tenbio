@@ -110,6 +110,17 @@ The ML layer uses ESM-3 (EvolutionaryScale) for advanced protein engineering:
 - **Host Organisms**: E. coli (BL21), yeast, cyanobacteria (Synechocystis), algae (Chlamydomonas) - each has different codon preferences, available enzymes, and metabolic capabilities (photosynthesis for cyanobacteria/algae)
 - **SBOL/GenBank**: Standard export formats for synthetic biology
 
+## Git Workflow
+
+**IMPORTANT: Never commit directly to main.** All changes must go through feature branches and pull requests.
+
+1. Create a feature branch: `git checkout -b feature/description`
+2. Make commits on the feature branch
+3. Push and create a PR for review
+4. Merge via GitHub PR after approval
+
+This applies to all changes, including documentation updates.
+
 ## API Conventions (Planned)
 
 - REST endpoints at `/api/v1/{resource}`
