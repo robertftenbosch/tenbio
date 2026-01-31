@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine, Base
-from app.routes import parts, optimize
+from app.routes import parts, optimize, igem
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -25,6 +25,7 @@ app.add_middleware(
 # Include routers
 app.include_router(parts.router)
 app.include_router(optimize.router)
+app.include_router(igem.router)
 
 
 @app.get("/health")
