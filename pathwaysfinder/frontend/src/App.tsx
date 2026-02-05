@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { PartsList } from './components/PartsLibrary/PartsList'
 import { SearchFilter, FilterOptions } from './components/PartsLibrary/SearchFilter'
+import { UnifiedSearch } from './components/UnifiedSearch/UnifiedSearch'
 import { PathwayDesigner } from './components/PathwayCanvas/PathwayDesigner'
 import { CodonOptimizer } from './components/CodonOptimizer/CodonOptimizer'
 
-type Tab = 'library' | 'designer' | 'optimizer'
+type Tab = 'library' | 'search' | 'designer' | 'optimizer'
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('library')
@@ -38,6 +39,16 @@ function App() {
               Parts Library
             </button>
             <button
+              onClick={() => setActiveTab('search')}
+              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
+                activeTab === 'search'
+                  ? 'bg-gray-50 text-bio-green-700'
+                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
+              }`}
+            >
+              Search Databases
+            </button>
+            <button
               onClick={() => setActiveTab('designer')}
               className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
                 activeTab === 'designer'
@@ -66,6 +77,15 @@ function App() {
           <>
             <SearchFilter filters={filters} onFilterChange={setFilters} />
             <PartsList filters={filters} />
+          </>
+        )}
+        {activeTab === 'search' && (
+          <>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Search Databases</h2>
+            <p className="text-gray-600 mb-6">
+              Search across local parts, KEGG pathways, UniProt proteins, and iGEM BioBricks.
+            </p>
+            <UnifiedSearch />
           </>
         )}
         {activeTab === 'designer' && <PathwayDesigner />}
