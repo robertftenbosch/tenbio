@@ -211,6 +211,45 @@ async def get_enzyme_info(ec_number: str) -> Optional[dict]:
             return None
 
 
+async def get_enzyme_genes(ec_number: str, organism: str = "eco") -> list[dict]:
+    """
+    Get genes that encode a specific enzyme for a given organism.
+
+    Args:
+        ec_number: EC number (e.g., "2.7.1.1")
+        organism: KEGG organism code (eco=E. coli, sce=S. cerevisiae)
+
+    Returns:
+        List of gene dictionaries with name, definition, and sequence info
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # Get genes linked to this enzyme for the specific organism
+            response = await client.get(f"{KEGG_BASE_URL}/link/{organism}/ec:{ec_number}")
+            response.raise_for_status()
+
+            genes = []
+            for line in response.text.strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 2:
+                    gene_id = parts[1]
+                    genes.append({"id": gene_id})
+
+            # Get details for genes (limit to 20 to avoid timeout)
+            for gene in genes[:20]:
+                info = await get_gene_info(gene["id"])
+                if info:
+                    gene.update(info)
+
+            return genes
+
+        except Exception as e:
+            print(f"Error getting enzyme genes: {e}")
+            return []
+
+
 def parse_kegg_entry(text: str, entry_type: str) -> dict:
     """Parse KEGG flat file format into dictionary."""
     result = {}

@@ -4,8 +4,6 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    kalign \
-    hmmer \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -16,11 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app/ ./app/
 
-# Default model to preload at startup (set to empty to skip)
-ENV PRELOAD_MODEL=protenix_base_default_v1.0.0
+# Default model to preload at startup
+ENV PRELOAD_MODEL=esmfold_v1
 
 # Expose the service port
-EXPOSE 8001
+EXPOSE 8002
 
 # Run the FastAPI server
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]

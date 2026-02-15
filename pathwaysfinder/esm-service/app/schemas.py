@@ -1,4 +1,4 @@
-"""Pydantic models for the Protenix prediction service."""
+"""Pydantic models for the ESM structure prediction service."""
 
 from datetime import datetime
 from typing import Literal, Optional
@@ -29,11 +29,9 @@ class PredictionRequest(BaseModel):
     sequences: list[ChainInput] = Field(
         ..., description="List of chains to predict", min_length=1
     )
-    model_name: str = Field(
-        "protenix_base_default_v1.0.0", description="Protenix model name"
-    )
+    model_name: str = Field("esmfold_v1", description="ESM model name")
     num_seeds: int = Field(1, description="Number of random seeds", ge=1, le=10)
-    num_samples: int = Field(5, description="Number of diffusion samples", ge=1, le=20)
+    num_samples: int = Field(1, description="Number of samples", ge=1, le=20)
 
 
 class ConfidenceScores(BaseModel):
@@ -60,12 +58,12 @@ class JobStatus(BaseModel):
 
 
 class ModelInfo(BaseModel):
-    """Metadata for a Protenix model variant."""
+    """Metadata for an ESM model variant."""
 
     name: str
     description: str
     parameters_m: float = Field(description="Model parameters in millions")
-    features: list[str] = Field(description="Supported features (MSA, Template, ESM, etc.)")
+    features: list[str] = Field(description="Supported features")
     speed_tier: Literal["fast", "medium", "slow"] = Field(
         description="Relative speed tier"
     )
@@ -76,7 +74,7 @@ class ModelInfo(BaseModel):
 class PreloadRequest(BaseModel):
     """Request to preload a model into GPU memory."""
 
-    model_name: str = Field(..., description="Protenix model name to preload")
+    model_name: str = Field(..., description="ESM model name to preload")
 
 
 class PreloadResponse(BaseModel):

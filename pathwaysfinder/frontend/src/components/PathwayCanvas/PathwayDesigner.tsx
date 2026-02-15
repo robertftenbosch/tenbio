@@ -3,6 +3,7 @@ import { Part } from '../../types/parts'
 import { useParts } from '../../hooks/useParts'
 import { PartCard } from '../PartsLibrary/PartCard'
 import { PathwayCanvas } from './PathwayCanvas'
+import { KeggImportModal } from './KeggImportModal'
 
 interface PathwayPart extends Part {
   x: number
@@ -14,8 +15,21 @@ export function PathwayDesigner() {
   const [pathwayParts, setPathwayParts] = useState<PathwayPart[]>([])
   const [selectedType, setSelectedType] = useState<string>('')
   const [showExport, setShowExport] = useState(false)
+  const [showKeggImport, setShowKeggImport] = useState(false)
+  const [importedParts, setImportedParts] = useState<Part[]>([])
 
-  const { parts, loading } = useParts({ type: selectedType || undefined })
+  const { parts, loading, refetch } = useParts({ type: selectedType || undefined })
+
+  // Combine local parts with imported parts
+  const allParts = [...parts, ...importedParts.filter(ip =>
+    selectedType === '' || ip.type === selectedType
+  )]
+
+  // Handle imported KEGG genes
+  const handleKeggImport = (newParts: Part[]) => {
+    setImportedParts(prev => [...prev, ...newParts])
+    refetch() // Refresh to pick up any saved parts
+  }
 
   const handleDragStart = (e: React.DragEvent, part: Part) => {
     e.dataTransfer.setData('application/json', JSON.stringify(part))
@@ -136,12 +150,20 @@ ${formatGenbankSequence(sequence)}
             <option value="terminator">Terminators</option>
           </select>
 
+          {/* Import from KEGG button */}
+          <button
+            onClick={() => setShowKeggImport(true)}
+            className="w-full px-3 py-2 mb-4 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors"
+          >
+            Import from KEGG
+          </button>
+
           {/* Parts list */}
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {loading ? (
               <div className="text-center py-4 text-gray-500">Loading...</div>
             ) : (
-              parts.map(part => (
+              allParts.map(part => (
                 <div
                   key={part.id}
                   draggable
@@ -258,6 +280,14 @@ ${formatGenbankSequence(sequence)}
           )}
         </div>
       </div>
+
+      {/* KEGG Import Modal */}
+      {showKeggImport && (
+        <KeggImportModal
+          onClose={() => setShowKeggImport(false)}
+          onImport={handleKeggImport}
+        />
+      )}
     </div>
   )
 }

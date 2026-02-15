@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ChainInput as ChainInputType, JobStatus, ProtenixModel } from '../../types/structure'
-import { submitPrediction, getJobStatus, getAvailableModels } from '../../api/structure'
+import { submitPrediction, getJobStatus, getAvailableModels, preloadModel } from '../../api/structure'
 import { ChainInputForm } from './ChainInput'
 import { StructureViewer } from './StructureViewer'
 
@@ -8,6 +8,21 @@ interface StructurePredictorProps {
   /** Pre-populate with a protein sequence (e.g. from Parts Library) */
   initialSequence?: string
   initialName?: string
+}
+
+const speedTierLabel: Record<string, { text: string; color: string }> = {
+  fast: { text: 'Fast', color: 'bg-green-100 text-green-700' },
+  medium: { text: 'Medium', color: 'bg-yellow-100 text-yellow-700' },
+  slow: { text: 'Slow', color: 'bg-orange-100 text-orange-700' },
+}
+
+const featureColors: Record<string, string> = {
+  MSA: 'bg-blue-100 text-blue-700',
+  Template: 'bg-purple-100 text-purple-700',
+  'RNA MSA': 'bg-pink-100 text-pink-700',
+  ESM: 'bg-indigo-100 text-indigo-700',
+  ISM: 'bg-violet-100 text-violet-700',
+  Constraints: 'bg-amber-100 text-amber-700',
 }
 
 export function StructurePredictor({ initialSequence, initialName }: StructurePredictorProps) {
@@ -23,10 +38,17 @@ export function StructurePredictor({ initialSequence, initialName }: StructurePr
   const [currentJob, setCurrentJob] = useState<JobStatus | null>(null)
   const [pollingId, setPollingId] = useState<number | null>(null)
 
-  // Load available models
-  useEffect(() => {
+  const [preloading, setPreloading] = useState(false)
+  const [preloadMsg, setPreloadMsg] = useState<string | null>(null)
+
+  const refreshModels = useCallback(() => {
     getAvailableModels().then(setModels)
   }, [])
+
+  // Load available models
+  useEffect(() => {
+    refreshModels()
+  }, [refreshModels])
 
   // Handle initial sequence prop
   useEffect(() => {
@@ -76,6 +98,39 @@ export function StructurePredictor({ initialSequence, initialName }: StructurePr
     setChains((prev) => prev.filter((_, i) => i !== index))
   }
 
+  const handlePreload = async () => {
+    setPreloading(true)
+    setPreloadMsg(null)
+    try {
+      const result = await preloadModel(modelName)
+      setPreloadMsg(result.message)
+      if (result.status === 'loading') {
+        // Poll models endpoint until loaded
+        const pollId = window.setInterval(async () => {
+          const updated = await getAvailableModels()
+          setModels(updated)
+          const target = updated.find((m) => m.name === modelName)
+          if (target?.loaded) {
+            clearInterval(pollId)
+            setPreloading(false)
+            setPreloadMsg(`Model '${modelName}' loaded successfully.`)
+          }
+        }, 3000)
+        // Safety timeout: stop polling after 10 minutes
+        setTimeout(() => {
+          clearInterval(pollId)
+          setPreloading(false)
+        }, 600_000)
+      } else {
+        setPreloading(false)
+        refreshModels()
+      }
+    } catch (e: any) {
+      setPreloadMsg(e.message || 'Failed to preload model')
+      setPreloading(false)
+    }
+  }
+
   const handleSubmit = async () => {
     if (chains.length === 0) return
 
@@ -117,6 +172,8 @@ export function StructurePredictor({ initialSequence, initialName }: StructurePr
     ligand: 'bg-amber-100 text-amber-700',
     ion: 'bg-gray-100 text-gray-700',
   }
+
+  const selectedModel = models.find((m) => m.name === modelName)
 
   return (
     <div className="space-y-6">
@@ -184,39 +241,101 @@ export function StructurePredictor({ initialSequence, initialName }: StructurePr
           </div>
         )}
 
-        {/* Settings */}
-        <div className="mt-4 flex flex-wrap gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
-            <select
-              value={modelName}
-              onChange={(e) => setModelName(e.target.value)}
-              className="px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-bio-green-500"
-            >
-              {models.length > 0
-                ? models.map((m) => (
-                    <option key={m.name} value={m.name}>
-                      {m.description}
-                    </option>
-                  ))
-                : (
-                    <option value="protenix_base_default_v1.0.0">
-                      Protenix base model (default)
-                    </option>
+        {/* Model selector */}
+        <div className="mt-4">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <select
+                value={modelName}
+                onChange={(e) => {
+                  setModelName(e.target.value)
+                  setPreloadMsg(null)
+                }}
+                className="w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-bio-green-500"
+              >
+                {models.length > 0
+                  ? models.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.description} ({m.parameters_m}M){m.loaded ? ' [Loaded]' : ''}
+                      </option>
+                    ))
+                  : (
+                      <option value="protenix_base_default_v1.0.0">
+                        Protenix base model (default)
+                      </option>
+                    )}
+              </select>
+
+              {/* Model details */}
+              {selectedModel && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {/* Size badge */}
+                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
+                    {selectedModel.parameters_m}M params
+                  </span>
+                  {/* Speed tier */}
+                  <span
+                    className={`px-2 py-0.5 rounded text-xs font-medium ${speedTierLabel[selectedModel.speed_tier]?.color || 'bg-gray-100 text-gray-700'}`}
+                  >
+                    {speedTierLabel[selectedModel.speed_tier]?.text || selectedModel.speed_tier}
+                  </span>
+                  {/* Feature tags */}
+                  {selectedModel.features.map((f) => (
+                    <span
+                      key={f}
+                      className={`px-2 py-0.5 rounded text-xs font-medium ${featureColors[f] || 'bg-gray-100 text-gray-600'}`}
+                    >
+                      {f}
+                    </span>
+                  ))}
+                  {/* Loaded badge */}
+                  {selectedModel.loaded && (
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                      Loaded
+                    </span>
                   )}
-            </select>
+                </div>
+              )}
+            </div>
+
+            {/* Preload button */}
+            <button
+              onClick={handlePreload}
+              disabled={preloading || selectedModel?.loaded}
+              className="px-3 py-2 text-sm font-medium border rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+              title={selectedModel?.loaded ? 'Model already loaded' : 'Preload model into GPU memory'}
+            >
+              {preloading ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-gray-600"></span>
+                  Loading...
+                </span>
+              ) : selectedModel?.loaded ? (
+                'Loaded'
+              ) : (
+                'Preload'
+              )}
+            </button>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Samples</label>
-            <input
-              type="number"
-              value={numSamples}
-              onChange={(e) => setNumSamples(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
-              min={1}
-              max={20}
-              className="w-20 px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-bio-green-500"
-            />
-          </div>
+
+          {/* Preload status message */}
+          {preloadMsg && (
+            <p className="mt-1.5 text-xs text-gray-500">{preloadMsg}</p>
+          )}
+        </div>
+
+        {/* Samples */}
+        <div className="mt-4">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Samples</label>
+          <input
+            type="number"
+            value={numSamples}
+            onChange={(e) => setNumSamples(Math.max(1, Math.min(20, parseInt(e.target.value) || 5)))}
+            min={1}
+            max={20}
+            className="w-20 px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-bio-green-500"
+          />
         </div>
 
         {/* Error display */}
@@ -252,7 +371,7 @@ export function StructurePredictor({ initialSequence, initialName }: StructurePr
             {currentJob.status === 'queued' && (
               <>
                 <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-                <span className="text-sm text-gray-700">Queued — waiting for GPU</span>
+                <span className="text-sm text-gray-700">Queued -- waiting for GPU</span>
               </>
             )}
             {currentJob.status === 'running' && (

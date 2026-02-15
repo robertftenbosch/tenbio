@@ -3,6 +3,7 @@ import {
   PredictionResponse,
   JobStatus,
   ProtenixModel,
+  PreloadResponse,
 } from '../types/structure'
 
 const API_BASE = '/api/v1/structure'
@@ -40,4 +41,17 @@ export async function getAvailableModels(): Promise<ProtenixModel[]> {
   if (!response.ok) return []
   const data = await response.json()
   return data.models || []
+}
+
+export async function preloadModel(modelName: string): Promise<PreloadResponse> {
+  const response = await fetch(`${API_BASE}/preload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model_name: modelName }),
+  })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({ detail: 'Preload request failed' }))
+    throw new Error(data.detail || 'Failed to preload model')
+  }
+  return response.json()
 }

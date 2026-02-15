@@ -1,4 +1,4 @@
-"""Protenix Structure Prediction Service -- FastAPI wrapper around Protenix inference."""
+"""ESM Structure Prediction Service -- FastAPI wrapper around ESMFold."""
 
 import logging
 import os
@@ -35,8 +35,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Protenix Structure Prediction Service",
-    description="GPU-accelerated biomolecular structure prediction powered by Protenix (AlphaFold 3 reproduction).",
+    title="ESM Structure Prediction Service",
+    description="GPU-accelerated protein structure prediction powered by ESMFold.",
     version="0.1.0",
 )
 
@@ -48,17 +48,17 @@ def startup_preload():
     if preload_name:
         if preload_name not in MODEL_CATALOG:
             logger.warning(
-                f"PRELOAD_MODEL='{preload_name}' is not a known model, skipping preload."
+                f"PRELOAD_MODEL='{preload_name}' is not a known ESM model, skipping."
             )
             return
-        logger.info(f"Startup: preloading model '{preload_name}' in background thread...")
+        logger.info(f"Startup: preloading ESM model '{preload_name}'...")
         thread = threading.Thread(target=preload_model, args=(preload_name,), daemon=True)
         thread.start()
 
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
-    """Health check endpoint -- reports GPU availability and model status."""
+    """Health check endpoint."""
     gpu_available = torch.cuda.is_available()
     gpu_name = torch.cuda.get_device_name(0) if gpu_available else None
 
@@ -75,31 +75,26 @@ def health_check():
 def submit_prediction(request: PredictionRequest):
     """Submit a structure prediction job.
 
-    Returns immediately with a job ID. Poll GET /jobs/{job_id} for status.
+    ESMFold only supports protein chains (no DNA/RNA/ligand/ion complexes).
     """
-    # Validate model name
     if request.model_name not in MODEL_CATALOG:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown model '{request.model_name}'. Use GET /models for available models.",
         )
 
-    # Basic validation
-    for chain in request.sequences:
-        if chain.type in ("protein", "dna", "rna") and not chain.sequence:
+    # Validate chains
+    protein_chains = [c for c in request.sequences if c.type == "protein"]
+    if not protein_chains:
+        raise HTTPException(
+            status_code=400,
+            detail="ESMFold requires at least one protein chain.",
+        )
+
+    for chain in protein_chains:
+        if not chain.sequence:
             raise HTTPException(
-                status_code=400,
-                detail=f"Sequence is required for chain type '{chain.type}'",
-            )
-        if chain.type == "ligand" and not chain.ligand_id:
-            raise HTTPException(
-                status_code=400,
-                detail="ligand_id (CCD code or SMILES) is required for ligand chains",
-            )
-        if chain.type == "ion" and not chain.ion_id:
-            raise HTTPException(
-                status_code=400,
-                detail="ion_id is required for ion chains",
+                status_code=400, detail="Protein sequence is required."
             )
 
     job_id = submit_job(request)
@@ -117,7 +112,7 @@ def poll_job_status(job_id: str):
 
 @app.get("/jobs/{job_id}/structure")
 def download_structure(job_id: str):
-    """Download the predicted structure as a CIF file."""
+    """Download the predicted structure file."""
     status = get_job_status(job_id)
     if not status:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -132,43 +127,43 @@ def download_structure(job_id: str):
     if not output_dir:
         raise HTTPException(status_code=404, detail="Output directory not found")
 
-    # Find the best CIF file
     output_path = Path(output_dir)
-    cif_files = list(output_path.rglob("*.cif"))
-    if not cif_files:
-        raise HTTPException(status_code=404, detail="No structure file found")
 
-    # Prefer ranked files
-    ranked = sorted([f for f in cif_files if "rank" in f.name])
-    cif_file = ranked[0] if ranked else cif_files[0]
+    # Try CIF first, then PDB
+    cif_files = list(output_path.glob("*.cif"))
+    if cif_files:
+        return FileResponse(
+            path=str(cif_files[0]),
+            media_type="chemical/x-mmcif",
+            filename=f"{job_id}.cif",
+        )
 
-    return FileResponse(
-        path=str(cif_file),
-        media_type="chemical/x-mmcif",
-        filename=f"{job_id}.cif",
-    )
+    pdb_files = list(output_path.glob("*.pdb"))
+    if pdb_files:
+        return FileResponse(
+            path=str(pdb_files[0]),
+            media_type="chemical/x-pdb",
+            filename=f"{job_id}.pdb",
+        )
+
+    raise HTTPException(status_code=404, detail="No structure file found")
 
 
 @app.get("/models")
 def list_models():
-    """List available Protenix model variants with metadata and loaded status."""
+    """List available ESM model variants."""
     return {"models": worker_list_models()}
 
 
 @app.post("/preload", response_model=PreloadResponse)
 def preload_model_endpoint(request: PreloadRequest, background_tasks: BackgroundTasks):
-    """Preload a model into GPU memory.
-
-    Starts loading in the background and returns immediately.
-    Poll GET /models or GET /health to check when loading is complete.
-    """
+    """Preload a model into GPU memory."""
     if request.model_name not in MODEL_CATALOG:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown model '{request.model_name}'. Use GET /models for available models.",
         )
 
-    # Already loaded
     if get_loaded_model() == request.model_name:
         return PreloadResponse(
             model_name=request.model_name,
@@ -176,7 +171,6 @@ def preload_model_endpoint(request: PreloadRequest, background_tasks: Background
             message=f"Model '{request.model_name}' is already loaded.",
         )
 
-    # Already preloading something
     if is_preloading():
         return PreloadResponse(
             model_name=request.model_name,
@@ -184,7 +178,6 @@ def preload_model_endpoint(request: PreloadRequest, background_tasks: Background
             message="A model is already being loaded. Please wait and try again.",
         )
 
-    # Start preloading in background
     background_tasks.add_task(preload_model, request.model_name)
 
     return PreloadResponse(

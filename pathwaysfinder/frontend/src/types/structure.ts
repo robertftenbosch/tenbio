@@ -41,7 +41,17 @@ export interface JobStatus {
 export interface ProtenixModel {
   name: string
   description: string
+  parameters_m: number
+  features: string[]
+  speed_tier: 'fast' | 'medium' | 'slow'
   default: boolean
+  loaded: boolean
+}
+
+export interface PreloadResponse {
+  model_name: string
+  status: 'loading' | 'already_loaded' | 'error'
+  message: string
 }
 
 export const COMMON_IONS = ['MG', 'ZN', 'FE', 'CA', 'NA', 'K', 'MN', 'CU', 'CO'] as const
