@@ -17,9 +17,10 @@ type SearchSource = 'local' | 'kegg' | 'uniprot' | 'igem'
 
 interface UnifiedSearchProps {
   onSelectPart?: (part: Part) => void
+  onPredictStructure?: (sequence: string, name?: string) => void
 }
 
-export function UnifiedSearch({ onSelectPart }: UnifiedSearchProps) {
+export function UnifiedSearch({ onSelectPart, onPredictStructure }: UnifiedSearchProps) {
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<SearchSource>('local')
   const [loading, setLoading] = useState(false)
@@ -254,7 +255,11 @@ export function UnifiedSearch({ onSelectPart }: UnifiedSearchProps) {
                   <p className="text-gray-500 text-center py-4">No proteins found</p>
                 )}
                 {uniprotProteins.map((protein) => (
-                  <UniprotProteinCard key={protein.accession} protein={protein} />
+                  <UniprotProteinCard
+                    key={protein.accession}
+                    protein={protein}
+                    onPredictStructure={onPredictStructure}
+                  />
                 ))}
               </div>
             )}
@@ -349,30 +354,53 @@ function KeggEnzymeCard({ enzyme }: { enzyme: KeggEnzyme }) {
   )
 }
 
-function UniprotProteinCard({ protein }: { protein: UniprotProtein }) {
+function UniprotProteinCard({
+  protein,
+  onPredictStructure,
+}: {
+  protein: UniprotProtein
+  onPredictStructure?: (sequence: string, name?: string) => void
+}) {
   return (
-    <a
-      href={protein.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block p-3 border rounded-lg hover:bg-gray-50 transition-colors"
-    >
+    <div className="p-3 border rounded-lg hover:bg-gray-50 transition-colors">
       <div className="flex items-center justify-between">
-        <div>
-          <span className="font-medium text-gray-900">{protein.protein_name || protein.entry_name}</span>
-          {protein.gene_names.length > 0 && (
-            <span className="ml-2 text-sm text-gray-500">({protein.gene_names[0]})</span>
-          )}
-        </div>
-        <span className="px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700">
-          {protein.accession}
-        </span>
+        <a
+          href={protein.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex-1"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-medium text-gray-900">{protein.protein_name || protein.entry_name}</span>
+              {protein.gene_names.length > 0 && (
+                <span className="ml-2 text-sm text-gray-500">({protein.gene_names[0]})</span>
+              )}
+            </div>
+            <span className="px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700">
+              {protein.accession}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+            {protein.organism && <span>{protein.organism}</span>}
+            {protein.length && <span>{protein.length} aa</span>}
+          </div>
+        </a>
+        {onPredictStructure && protein.sequence && (
+          <button
+            onClick={() =>
+              onPredictStructure(
+                protein.sequence!,
+                protein.protein_name || protein.entry_name || protein.accession
+              )
+            }
+            className="ml-2 px-2 py-1 text-xs font-medium text-bio-green-700 bg-bio-green-50 rounded hover:bg-bio-green-100 transition-colors whitespace-nowrap"
+          >
+            Predict Structure
+          </button>
+        )}
       </div>
-      <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-        {protein.organism && <span>{protein.organism}</span>}
-        {protein.length && <span>{protein.length} aa</span>}
-      </div>
-    </a>
+    </div>
   )
 }
 

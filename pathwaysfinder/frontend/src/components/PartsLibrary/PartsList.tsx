@@ -8,9 +8,10 @@ import { Part } from '../../types/parts'
 
 interface PartsListProps {
   filters: FilterOptions
+  onPredictStructure?: (sequence: string, name?: string) => void
 }
 
-export function PartsList({ filters }: PartsListProps) {
+export function PartsList({ filters, onPredictStructure }: PartsListProps) {
   const [selectedPart, setSelectedPart] = useState<Part | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingPart, setEditingPart] = useState<Part | null>(null)
@@ -101,6 +102,7 @@ export function PartsList({ filters }: PartsListProps) {
           part={selectedPart}
           onClose={() => setSelectedPart(null)}
           onEdit={() => handleEditPart(selectedPart)}
+          onPredictStructure={onPredictStructure}
         />
       )}
 

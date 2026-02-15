@@ -12,7 +12,33 @@ services:
       - api-data:/app/data
     environment:
       - DATABASE_URL=sqlite:///./data/parts.db
+      - PROTENIX_SERVICE_URL=http://protenix:8001
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  protenix:
+    build:
+      context: ./protenix-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - protenix-cache:/root/checkpoint
+      - protenix-output:/app/output
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PROTENIX_OUTPUT_DIR=/app/output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   frontend:
     build:
@@ -30,3 +56,5 @@ services:
 
 volumes:
   api-data:
+  protenix-cache:
+  protenix-output:
