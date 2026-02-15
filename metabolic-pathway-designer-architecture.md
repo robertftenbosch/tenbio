@@ -6,51 +6,51 @@ Een webapplicatie waarmee synbio-onderzoekers genetische constructen kunnen ontw
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        FRONTEND                                  │
+│                     FRONTEND (:3000)                              │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
+│  │ Parts       │ │ Pathway     │ │ Codon       │ │ Structure │  │
+│  │ Library     │ │ Designer    │ │ Optimizer   │ │ Predictor │  │
+│  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
+│  ┌─────────────┐                                                 │
+│  │ Unified     │                                                 │
+│  │ Search      │                                                 │
+│  └─────────────┘                                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     API SERVICE (:8000)                           │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐        │
-│  │ Pathway       │  │ Sequence      │  │ Simulatie     │        │
-│  │ Visualisatie  │  │ Editor        │  │ Dashboard     │        │
+│  │ /parts        │  │ /optimize     │  │ /structure    │        │
+│  │ CRUD + search │  │ codon optim.  │  │ proxy→protenix│        │
+│  └───────────────┘  └───────────────┘  └───────────────┘        │
+│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐        │
+│  │ /kegg         │  │ /uniprot      │  │ /igem         │        │
+│  │ pathways/enz. │  │ proteins      │  │ biobricks     │        │
 │  └───────────────┘  └───────────────┘  └───────────────┘        │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        API LAYER                                 │
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐        │
-│  │ /design       │  │ /simulate     │  │ /export       │        │
-│  │ endpoints     │  │ endpoints     │  │ endpoints     │        │
-│  └───────────────┘  └───────────────┘  └───────────────┘        │
-│  ┌───────────────┐                                               │
-│  │ /ml           │  ← ESM-3 protein design endpoints             │
-│  │ endpoints     │                                               │
-│  └───────────────┘                                               │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     CORE SERVICES                                │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
-│  │ Pathway     │ │ Sequence    │ │ Simulation  │ │ Parts     │  │
-│  │ Engine      │ │ Optimizer   │ │ Engine      │ │ Registry  │  │
-│  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     GPU/ML LAYER (A6000 48GB)                    │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
-│  │ ESM-3       │ │ Structure   │ │ Embedding   │ │ Expression│  │
-│  │ Service     │ │ Predictor   │ │ Service     │ │ Predictor │  │
-│  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────┐ ┌──────────────────────────────┐
+│    PROTENIX GPU SERVICE (:8001)  │ │    ESM GPU SERVICE (:8002)    │
+│  ┌──────────┐ ┌──────────┐      │ │  ┌──────────┐ ┌──────────┐  │
+│  │ Model    │ │ Predict  │      │ │  │ ESMFold  │ │ Predict  │  │
+│  │ Registry │ │ Worker   │      │ │  │ Model    │ │ Worker   │  │
+│  │ (8 mod.) │ │          │      │ │  │          │ │          │  │
+│  └──────────┘ └──────────┘      │ │  └──────────┘ └──────────┘  │
+│  Multi-chain complexen          │ │  Single-chain protein only   │
+│  AlphaFold 3 (diffusion)        │ │  ESMFold (single pass)       │
+└──────────────────────────────────┘ └──────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     DATA LAYER                                   │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────┐  │
-│  │ PostgreSQL  │ │ Redis       │ │ S3/Minio    │ │ External  │  │
-│  │ (projecten) │ │ (cache)     │ │ (sequences) │ │ APIs      │  │
+│  │ SQLite      │ │ Protenix    │ │ Model       │ │ External  │  │
+│  │ (parts DB)  │ │ Output CIFs │ │ Checkpoints │ │ APIs      │  │
 │  └─────────────┘ └─────────────┘ └─────────────┘ └───────────┘  │
+│                                                                   │
+│  Externe APIs: KEGG, UniProt, iGEM, PubMed                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -383,299 +383,119 @@ class GeneticPart(Base):
     success_rate = Column(Float)
 ```
 
-### 3.5 ESM-3 ML Service (GPU)
+### 3.5 Protenix Structure Prediction Service (GPU) -- GEIMPLEMENTEERD
 
-Machine learning service voor geavanceerde eiwit-analyse en -design, draaiend op NVIDIA A6000 (48GB VRAM).
+GPU-accelerated 3D structuurvoorspelling via Protenix (AlphaFold 3 reproductie door ByteDance).
+Draait als aparte microservice op poort 8001.
 
-```python
-# ml_service/esm3_service.py
+**Beschikbare modellen:**
 
-from esm.models.esm3 import ESM3
-from esm.sdk.api import ESMProtein, GenerationConfig
-import torch
+| Model | Parameters | Features | Snelheid |
+|-------|-----------|----------|----------|
+| `protenix_base_default_v1.0.0` | 368M | MSA + Template + RNA MSA | Langzaam (200 stappen, 10 cycles) |
+| `protenix_base_20250630_v1.0.0` | 368M | MSA + Template + RNA MSA (nieuwere PDB data) | Langzaam |
+| `protenix_base_default_v0.5.0` | 368M | MSA | Langzaam |
+| `protenix_base_constraint_v0.5.0` | 368M | MSA + Constraints (pocket/contact) | Langzaam |
+| `protenix_mini_esm_v0.5.0` | 135M | ESM + MSA (geen MSA search nodig) | Snel (5 stappen, 4 cycles) |
+| `protenix_mini_ism_v0.5.0` | 135M | ISM + MSA | Snel |
+| `protenix_mini_default_v0.5.0` | 134M | MSA | Snel |
+| `protenix_tiny_default_v0.5.0` | 110M | MSA | Snelst |
 
-class ESM3Service:
-    """
-    ESM-3 integratie voor protein engineering.
-
-    Hardware: NVIDIA A6000 (48GB VRAM)
-    Model: ESM3-open (small) - ~8-12GB VRAM
-    Licentie: Non-commercial (ESM3-open)
-    """
-
-    def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model = ESM3.from_pretrained("esm3_sm_open_v1").to(self.device)
-
-    def predict_structure(self, sequence: str) -> ProteinStructure:
-        """
-        Voorspel 3D structuur van eiwit.
-        Vervangt aparte ESMFold call.
-        """
-        protein = ESMProtein(sequence=sequence)
-        config = GenerationConfig(track="structure", num_steps=10)
-        result = self.model.generate(protein, config)
-        return ProteinStructure(
-            pdb=result.to_pdb_string(),
-            confidence=result.ptm,
-            per_residue_confidence=result.plddt
-        )
-
-    def generate_variants(
-        self,
-        sequence: str,
-        constraints: dict,
-        num_variants: int = 5
-    ) -> list[ProteinVariant]:
-        """
-        Genereer geoptimaliseerde eiwitvarianten.
-
-        Constraints kunnen zijn:
-        - preserve_regions: [(start, end), ...] - behoud deze regio's
-        - optimize_for: ["solubility", "stability", "expression"]
-        - avoid_epitopes: [...] - vermijd allergene epitopen
-        """
-        protein = ESMProtein(sequence=sequence)
-
-        # Mask posities die geoptimaliseerd mogen worden
-        if constraints.get("preserve_regions"):
-            mask = self._create_preservation_mask(
-                sequence,
-                constraints["preserve_regions"]
-            )
-            protein = protein.with_mask(mask)
-
-        variants = []
-        for _ in range(num_variants):
-            config = GenerationConfig(
-                track="sequence",
-                num_steps=16,
-                temperature=0.7
-            )
-            variant = self.model.generate(protein, config)
-
-            # Evalueer variant
-            score = self._evaluate_variant(
-                variant,
-                constraints.get("optimize_for", [])
-            )
-            variants.append(ProteinVariant(
-                sequence=variant.sequence,
-                mutations=self._get_mutations(sequence, variant.sequence),
-                predicted_improvements=score
-            ))
-
-        return sorted(variants, key=lambda v: v.predicted_improvements, reverse=True)
-
-    def scaffold_motif(
-        self,
-        motif_sequence: str,
-        motif_structure: str,
-        scaffold_length: int = 100
-    ) -> list[ProteinDesign]:
-        """
-        Ontwerp nieuw eiwit rondom een functioneel motief.
-
-        Gebruik: behoud actief centrum maar ontwerp nieuwe scaffold
-        voor betere stabiliteit of expressie.
-        """
-        # Creëer prompt met structuur constraint voor motief
-        protein = ESMProtein.from_pdb(motif_structure)
-
-        # Extend met masked residues
-        protein = protein.extend_with_mask(
-            n_terminal=scaffold_length // 2,
-            c_terminal=scaffold_length // 2
-        )
-
-        config = GenerationConfig(
-            track="sequence",
-            num_steps=32,
-            temperature=0.5  # Lager voor meer conservatief design
-        )
-
-        designs = []
-        for _ in range(3):
-            result = self.model.generate(protein, config)
-            designs.append(ProteinDesign(
-                sequence=result.sequence,
-                structure=result.to_pdb_string(),
-                motif_preserved=self._verify_motif(result, motif_sequence)
-            ))
-
-        return designs
-
-    def inverse_fold(self, structure_pdb: str) -> list[str]:
-        """
-        Van 3D structuur naar optimale aminozuursequentie.
-
-        Gebruik: gegeven een gewenste vouwing, vind de beste
-        sequentie die stabiel is in de host.
-        """
-        protein = ESMProtein.from_pdb(structure_pdb)
-        protein = protein.with_masked_sequence()  # Mask alle residues
-
-        config = GenerationConfig(
-            track="sequence",
-            num_steps=16
-        )
-
-        sequences = []
-        for temp in [0.3, 0.5, 0.7]:  # Verschillende temperaturen
-            config.temperature = temp
-            result = self.model.generate(protein, config)
-            sequences.append(result.sequence)
-
-        return sequences
-
-    def get_embedding(self, sequence: str) -> torch.Tensor:
-        """
-        Genereer protein embedding voor similarity search.
-
-        Gebruik met FAISS voor snelle vector search over
-        parts library of UniProt.
-        """
-        protein = ESMProtein(sequence=sequence)
-        with torch.no_grad():
-            embedding = self.model.encode(protein)
-        return embedding.mean(dim=0)  # Pool over residues
-
-    def predict_expression(
-        self,
-        sequence: str,
-        host: str
-    ) -> ExpressionPrediction:
-        """
-        Voorspel expressieniveau gebaseerd op eiwit eigenschappen.
-
-        Combineert ESM-3 structuur predictie met host-specifieke
-        analyse (aggregatie, toxiciteit, metabole burden).
-        """
-        structure = self.predict_structure(sequence)
-
-        # Analyseer problematische eigenschappen
-        aggregation_prone = self._predict_aggregation(structure)
-        has_rare_folds = self._check_rare_folds(structure, host)
-
-        return ExpressionPrediction(
-            predicted_yield=self._estimate_yield(
-                aggregation_prone,
-                has_rare_folds
-            ),
-            bottlenecks=self._identify_bottlenecks(structure, host),
-            recommendations=self._generate_recommendations(
-                sequence,
-                structure,
-                host
-            )
-        )
-
-
-# Pydantic models voor type safety
-from pydantic import BaseModel
-
-class ProteinStructure(BaseModel):
-    pdb: str
-    confidence: float  # pTM score
-    per_residue_confidence: list[float]  # pLDDT per residue
-
-class ProteinVariant(BaseModel):
-    sequence: str
-    mutations: list[str]  # ["A23V", "K45R", ...]
-    predicted_improvements: dict[str, float]
-
-class ProteinDesign(BaseModel):
-    sequence: str
-    structure: str  # PDB format
-    motif_preserved: bool
-
-class ExpressionPrediction(BaseModel):
-    predicted_yield: float  # mg/L
-    bottlenecks: list[str]
-    recommendations: list[str]
-```
-
-### 3.6 Embedding & Vector Search Service
-
-Snelle similarity search over eiwitten en genetische onderdelen.
+**Architectuur:**
 
 ```python
-# ml_service/embedding_service.py
+# protenix-service/app/prediction_worker.py
 
-import faiss
-import numpy as np
-from typing import Optional
+# Model Registry -- slechts 1 model geladen per keer (GPU VRAM beperking)
+MODEL_CATALOG = {
+    "protenix_base_default_v1.0.0": {
+        "parameters_m": 368.48,
+        "features": ["MSA", "Template", "RNA MSA"],
+        "speed_tier": "slow",
+        "n_step": 200, "n_cycle": 10,
+    },
+    # ... 7 andere modelvarianten
+}
 
-class EmbeddingService:
-    """
-    Vector similarity search met FAISS (GPU-accelerated).
+def get_runner(model_name: str):
+    """Laad model, swap als ander model gevraagd wordt.
+    Bij swap: del runner, torch.cuda.empty_cache(), dan nieuw model laden."""
 
-    Gebruikt ESM-3 embeddings voor semantische zoektocht
-    over eiwitten en genetische onderdelen.
-    """
-
-    def __init__(self, esm3_service: ESM3Service):
-        self.esm3 = esm3_service
-        self.dimension = 1536  # ESM-3 embedding dimensie
-
-        # GPU-accelerated FAISS index
-        res = faiss.StandardGpuResources()
-        self.index = faiss.GpuIndexFlatIP(res, self.dimension)
-
-        self.id_mapping: dict[int, str] = {}  # FAISS idx → protein ID
-
-    def index_protein(self, protein_id: str, sequence: str):
-        """Voeg eiwit toe aan vector index."""
-        embedding = self.esm3.get_embedding(sequence)
-        embedding_np = embedding.cpu().numpy().reshape(1, -1)
-
-        # Normaliseer voor cosine similarity
-        faiss.normalize_L2(embedding_np)
-
-        idx = self.index.ntotal
-        self.index.add(embedding_np)
-        self.id_mapping[idx] = protein_id
-
-    def search_similar(
-        self,
-        query_sequence: str,
-        k: int = 10,
-        min_similarity: float = 0.5
-    ) -> list[tuple[str, float]]:
-        """
-        Vind vergelijkbare eiwitten.
-
-        Returns: [(protein_id, similarity_score), ...]
-        """
-        query_embedding = self.esm3.get_embedding(query_sequence)
-        query_np = query_embedding.cpu().numpy().reshape(1, -1)
-        faiss.normalize_L2(query_np)
-
-        scores, indices = self.index.search(query_np, k)
-
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if score >= min_similarity and idx in self.id_mapping:
-                results.append((self.id_mapping[idx], float(score)))
-
-        return results
-
-    def semantic_search(
-        self,
-        query: str,
-        protein_type: Optional[str] = None
-    ) -> list[tuple[str, float]]:
-        """
-        Semantische zoektocht met natural language query.
-
-        Voorbeeld: "thermostabiel enzym voor hoge temperatuur"
-
-        Note: Vereist text-to-protein embedding model of
-        vooraf gedefinieerde query templates.
-        """
-        # TODO: Implementeer met text encoder
-        pass
+def preload_model(model_name: str):
+    """Eager loading voor eliminatie cold-start delay."""
 ```
+
+**API Endpoints (poort 8001):**
+
+```
+GET  /health           # GPU status + welk model geladen is
+GET  /models           # Alle 8 modellen met metadata en loaded status
+POST /predict          # Submit prediction job (met model_name keuze)
+GET  /jobs/{id}        # Poll job status
+GET  /jobs/{id}/structure  # Download voorspelde CIF structuur
+POST /preload          # Preload model naar GPU (async, fire-and-forget)
+```
+
+**Environment variabelen:**
+- `PRELOAD_MODEL` -- model dat bij startup geladen wordt (default: `protenix_base_default_v1.0.0`)
+- `PROTENIX_OUTPUT_DIR` -- output directory voor CIF bestanden
+
+**Ondersteunde chain types:** protein, DNA, RNA, ligand (CCD/SMILES), ion
+
+**Confidence scores:** pLDDT (0-100), pTM (0-1), ipTM (0-1), ranking score
+
+### 3.6 ESM Structure Prediction Service (GPU) -- GEIMPLEMENTEERD
+
+Snelle structuurvoorspelling via ESMFold (Meta AI). Draait als aparte microservice op poort 8002.
+Ideaal voor snelle single-chain protein previews zonder MSA search.
+
+**Beschikbare modellen:**
+
+| Model | Parameters | Features | Snelheid |
+|-------|-----------|----------|----------|
+| `esmfold_v1` | 690M | Protein (single-chain) | Zeer snel (single forward pass) |
+
+**Verschil met Protenix:**
+- ESMFold: alleen enkelvoudige eiwitketens, geen complexen (geen DNA/RNA/ligand/ion)
+- ESMFold: geen MSA search nodig, directe sequentie-naar-structuur voorspelling
+- ESMFold: sneller maar minder nauwkeurig voor grote complexen
+- Protenix: volledige multi-chain complexen, MSA + Template features, nauwkeuriger
+
+**Architectuur:**
+
+```python
+# esm-service/app/prediction_worker.py
+
+MODEL_CATALOG = {
+    "esmfold_v1": {
+        "parameters_m": 690.0,
+        "features": ["Protein"],
+        "speed_tier": "fast",
+    },
+}
+
+def get_model(model_name: str):
+    """Laad ESMFold model met GPU swap support."""
+
+def _run_esmfold(sequence: str, output_dir: str):
+    """ESMFold inference: sequentie -> PDB -> CIF conversie."""
+```
+
+**API Endpoints (poort 8002):** Zelfde contract als Protenix service.
+
+**Routing:** De API service (:8000) routeert automatisch op basis van model naam prefix:
+- `protenix_*` modellen -> Protenix service (:8001)
+- `esm*` modellen -> ESM service (:8002)
+
+### 3.7 Toekomstige ML Features
+
+Geplande uitbreidingen voor de ESM service:
+
+- Automatische variant generatie voor betere expressie
+- Motif scaffolding voor enzyme engineering
+- Inverse folding (structuur naar sequentie)
+- Protein embeddings voor similarity search (FAISS)
+- Expression level prediction
 
 ---
 
@@ -777,56 +597,35 @@ class IGEMClient:
 
 ## 5. Deployment
 
-### Docker Compose (Development)
+### Docker Compose (Huidige Configuratie)
 
 ```yaml
 version: '3.8'
 
 services:
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:3000"
-    environment:
-      - REACT_APP_API_URL=http://localhost:8000
-    volumes:
-      - ./frontend/src:/app/src
-
   api:
     build: ./api
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://user:pass@db:5432/pathway_designer
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - db
-      - redis
     volumes:
       - ./api:/app
-
-  simulation_worker:
-    build: ./api
-    command: celery -A tasks worker --loglevel=info
+      - api-data:/app/data
     environment:
-      - DATABASE_URL=postgresql://user:pass@db:5432/pathway_designer
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - db
-      - redis
+      - DATABASE_URL=sqlite:///./data/parts.db
+      - PROTENIX_SERVICE_URL=http://protenix:8001
+      - ESM_SERVICE_URL=http://esm:8002
 
-  # GPU Worker voor ML taken (ESM-3, embeddings, etc.)
-  ml_worker:
-    build: ./api
-    command: celery -A ml_tasks worker --loglevel=info -Q ml_queue
+  protenix:
+    build: ./protenix-service
+    ports:
+      - "8001:8001"
+    volumes:
+      - protenix-cache:/root/checkpoint
+      - protenix-output:/app/output
     environment:
-      - DATABASE_URL=postgresql://user:pass@db:5432/pathway_designer
-      - REDIS_URL=redis://redis:6379
-      - CUDA_VISIBLE_DEVICES=0
-      - ESM3_MODEL=esm3_sm_open_v1
-    depends_on:
-      - db
-      - redis
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PROTENIX_OUTPUT_DIR=/app/output
+      - PRELOAD_MODEL=protenix_base_default_v1.0.0
     deploy:
       resources:
         reservations:
@@ -834,123 +633,146 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    volumes:
-      - ./api:/app
-      - esm_model_cache:/root/.cache/huggingface  # Cache ESM-3 weights
 
-  db:
-    image: postgres:15
+  esm:
+    build: ./esm-service
+    ports:
+      - "8002:8002"
+    volumes:
+      - esm-cache:/root/.cache
+      - esm-output:/app/output
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=pass
-      - POSTGRES_DB=pathway_designer
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - NVIDIA_VISIBLE_DEVICES=all
+      - ESM_OUTPUT_DIR=/app/output
+      - PRELOAD_MODEL=esmfold_v1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
-  redis:
-    image: redis:7-alpine
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
     volumes:
-      - redis_data:/data
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - api
 
 volumes:
-  postgres_data:
-  redis_data:
-  esm_model_cache:  # Persistent cache voor ESM-3 model weights
+  api-data:
+  protenix-cache:       # Cached Protenix model checkpoints
+  protenix-output:      # Predicted CIF structures (Protenix)
+  esm-cache:            # Cached ESMFold model weights
+  esm-output:           # Predicted structures (ESM)
 ```
 
 ---
 
-## 5.1 GPU Server Specificaties
+## 5.1 GPU Services Details
 
-**Hardware:** NVIDIA A6000 (48GB VRAM)
+### VRAM Gebruik per Model
 
-### VRAM Allocatie
+| Service | Model Variant | Parameters | Geschat VRAM |
+|---------|--------------|-----------|-------------|
+| Protenix | `protenix_base_*` | 368M | ~8-12GB |
+| Protenix | `protenix_mini_*` | 135M | ~4-6GB |
+| Protenix | `protenix_tiny_*` | 110M | ~3-5GB |
+| ESM | `esmfold_v1` | 690M | ~8-16GB |
 
-| Model/Service | VRAM Usage | Concurrent |
-|--------------|------------|------------|
-| ESM-3 (small) | ~8-12GB | Ja |
-| FAISS GPU Index | ~2-4GB | Ja |
-| Batch inference buffer | ~8GB | - |
-| **Totaal actief** | **~20-24GB** | - |
-| **Beschikbaar voor grote batches** | **~24GB** | - |
+**Beperking:** Elk service laadt slechts 1 model tegelijk. Bij model swap: `del model` + `torch.cuda.empty_cache()`.
+
+**Let op:** Beide GPU services draaien op dezelfde GPU. Bij gelijktijdig gebruik kan VRAM tekort optreden. Start alleen de service die je nodig hebt, of gebruik de preload functie om te wisselen.
 
 ### Configuratie
 
 ```yaml
-# ml_config.yaml
+# Protenix service environment
+PRELOAD_MODEL: protenix_base_default_v1.0.0
+PROTENIX_OUTPUT_DIR: /app/output
 
-esm3:
-  model: "esm3_sm_open_v1"
-  device: "cuda:0"
-  max_sequence_length: 2048
-  batch_size: 4
-  cache_embeddings: true
+# ESM service environment
+PRELOAD_MODEL: esmfold_v1
+ESM_OUTPUT_DIR: /app/output
 
-faiss:
-  use_gpu: true
-  index_type: "IVF4096,Flat"  # Voor grote datasets
-  nprobe: 64
-
-inference:
-  max_concurrent_requests: 4
-  timeout_seconds: 300
-  queue: "ml_queue"
+# API service environment (routing)
+PROTENIX_SERVICE_URL: http://protenix:8001
+ESM_SERVICE_URL: http://esm:8002
 ```
 
 ---
 
-## 6. MVP Scope
+## 6. MVP Scope & Voortgang
 
-### Fase 1 (2-3 maanden): Proof of Concept
+### Fase 1: Basis Platform -- VOLTOOID
 
-**Focus:** Albumine expressie in E. coli
+- [x] Parts Library: CRUD, zoeken, filteren op type/organisme
+- [x] Codon optimalisatie (meest frequent / gewogen strategie)
+- [x] DNA translatie
+- [x] Export naar FASTA en GenBank formaat
+- [x] Unified Search over lokale parts, KEGG, UniProt, iGEM
+- [x] SQLite database voor parts
 
-- [ ] Simpele UI: kies target eiwit → krijg construct
-- [ ] Hardcoded pathway voor albumine
-- [ ] Codon optimalisatie
-- [ ] Export naar GenBank formaat
-- [ ] Basic simulatie (promoter sterkte alleen)
+### Fase 2: Pathway Design & External APIs -- VOLTOOID
 
-### Fase 2 (3-4 maanden): Uitbreiding
+- [x] Pathway Designer met drag-and-drop canvas
+- [x] Visuele volgorde (Promoter -> RBS -> Gene -> Terminator)
+- [x] KEGG pathway import via modal
+- [x] UniProt eiwit search en import
+- [x] iGEM BioBrick search en import
+- [x] PubMed literatuur zoeken per part
+- [x] Meerdere host organismen (E. coli, yeast)
 
-- [ ] Meerdere target eiwitten (stollingsfactoren, insuline)
-- [ ] Pathway visualisatie canvas
-- [ ] Parts library browser
-- [ ] Meerdere host organismen (yeast)
+### Fase 3: Structure Prediction -- VOLTOOID
+
+- [x] Protenix (AlphaFold 3) integratie als GPU microservice
+- [x] Multi-chain support (protein, DNA, RNA, ligand, ion)
+- [x] 3D structuur visualisatie met 3Dmol.js
+- [x] Confidence scores (pLDDT, pTM, ipTM, ranking)
+- [x] Model selectie (8 Protenix varianten: base/mini/tiny/constraint)
+- [x] Model preloading naar GPU met status feedback
+- [x] Docker Compose met GPU reservering
+
+### Fase 3b: ESMFold Service -- VOLTOOID
+
+- [x] ESMFold structuurvoorspelling als aparte GPU microservice (:8002)
+- [x] Zelfde API contract als Protenix (predict, jobs, models, preload)
+- [x] API routing layer: automatisch routeren op basis van model prefix
+- [x] Model preloading bij startup via `PRELOAD_MODEL` env var
+- [x] PDB naar CIF conversie voor consistente output
+- [x] Docker Compose met beide GPU services
+
+### Fase 4: Nog te doen
+
+- [ ] KEGG import bug fixen (genes niet gevonden)
 - [ ] User accounts & projecten opslaan
-
-### Fase 3 (4-6 maanden): Geavanceerd
-
-- [ ] Automatische pathway discovery via KEGG
+- [ ] ESM-3 variant generatie en inverse folding
 - [ ] Flux Balance Analysis simulatie
-- [ ] Integratie met DNA synthesis bedrijven
 - [ ] Lab protocol generator
 - [ ] Team collaboration features
-
-### Fase 4 (6+ maanden): ML-Enhanced Design
-
-- [ ] ESM-3 structuurvoorspelling integratie
-- [ ] Automatische variant generatie voor betere expressie
-- [ ] Motif scaffolding voor enzyme engineering
-- [ ] Semantische zoektocht over parts library
-- [ ] Expression level prediction met ML
 
 ---
 
 ## 7. Tech Keuzes Samengevat
 
-| Component | Keuze | Reden |
-|-----------|-------|-------|
-| Frontend | React + TypeScript | Ecosysteem, typing |
-| Visualisatie | D3.js | Flexibiliteit voor custom grafieken |
-| Backend | FastAPI (Python) | Bioinfo libraries, async support |
-| Database | PostgreSQL | JSONB voor flexibele schemas |
-| Queue | Redis + Celery | Async simulaties |
-| Auth | JWT + API keys | Simpel, standaard |
-| Deployment | Docker + fly.io of Railway | Makkelijk starten |
-| **ML/AI** | **ESM-3** | **Multimodaal protein LM (seq+struct+func)** |
-| **GPU** | **NVIDIA A6000 (48GB)** | **Ruim voor ESM-3 + FAISS + batching** |
-| **Vector Search** | **FAISS GPU** | **Snelle similarity search** |
+| Component | Keuze | Status |
+|-----------|-------|--------|
+| Frontend | React 18 + TypeScript + Vite | Actief |
+| Styling | Tailwind CSS 3.4 | Actief |
+| 3D Viewer | 3Dmol.js | Actief |
+| Backend API | FastAPI + SQLAlchemy + SQLite | Actief |
+| Structure Prediction | Protenix (AlphaFold 3) + ESMFold | Actief |
+| GPU Services | 2x PyTorch + CUDA containers (Protenix :8001, ESM :8002) | Actief |
+| External APIs | KEGG, UniProt, iGEM, PubMed (via httpx) | Actief |
+| Deployment | Docker Compose (3 services) | Actief |
+| **ML/AI (toekomstig)** | **ESM-3 variant generatie, inverse folding** | **Gepland** |
+| **Vector Search (toekomstig)** | **FAISS GPU** | **Gepland** |
 
 ---
 
@@ -1012,13 +834,10 @@ scipy>=1.11.0
 
 ---
 
-## Volgende Stap
+## Volgende Stappen
 
-Wil je dat ik een van deze onderdelen verder uitwerk? Bijvoorbeeld:
-
-1. **Frontend prototype** - Werkende React app met pathway visualisatie
-2. **API scaffold** - FastAPI project met basis endpoints
-3. **Codon optimizer** - Werkende Python module
-4. **Database seeding** - Script om parts registry te vullen met iGEM data
-5. **ESM-3 service** - GPU worker met protein design capabilities
-6. **Vector search setup** - FAISS index voor parts/protein similarity
+1. **KEGG Import bug fixen** -- genes worden niet gevonden bij enzyme search
+2. **ESM-3 service** -- GPU worker voor protein design (variant generatie, inverse folding)
+3. **User accounts & projecten** -- opslaan en delen van ontwerpen
+4. **Vector search** -- FAISS index voor similarity search over parts library
+5. **Flux Balance Analysis** -- metabole flux simulatie voor pathway optimalisatie

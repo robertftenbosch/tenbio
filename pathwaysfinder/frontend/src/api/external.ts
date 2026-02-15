@@ -18,6 +18,14 @@ export interface KeggEnzyme {
   url?: string
 }
 
+export interface KeggGene {
+  id: string
+  name?: string
+  definition?: string
+  organism?: string
+  sequence?: string
+}
+
 // UniProt Types
 export interface UniprotProtein {
   accession: string
@@ -58,6 +66,31 @@ export async function searchKeggEnzymes(query: string): Promise<KeggEnzyme[]> {
   if (!response.ok) return []
   const data = await response.json()
   return data.enzymes || []
+}
+
+export async function getKeggEnzymeGenes(ecNumber: string, organism = 'ecoli'): Promise<KeggGene[]> {
+  const response = await fetch(
+    `${API_BASE}/kegg/enzymes/${encodeURIComponent(ecNumber)}/genes?organism=${organism}`
+  )
+  if (!response.ok) return []
+  return response.json()
+}
+
+export async function getKeggPathwayGenes(pathwayId: string, includeSequence = false): Promise<KeggGene[]> {
+  const response = await fetch(
+    `${API_BASE}/kegg/pathways/${encodeURIComponent(pathwayId)}/genes?include_sequence=${includeSequence}`
+  )
+  if (!response.ok) return []
+  return response.json()
+}
+
+export async function getKeggGeneSequence(geneId: string): Promise<string | null> {
+  const response = await fetch(
+    `${API_BASE}/kegg/genes/${encodeURIComponent(geneId)}?include_sequence=true`
+  )
+  if (!response.ok) return null
+  const data = await response.json()
+  return data.sequence || null
 }
 
 // UniProt API

@@ -56,7 +56,7 @@ export function PathwayCanvas({ parts, onPartsChange, onRemovePart }: PathwayCan
 
     // Calculate positions
     let currentX = 0
-    const partPositions = parts.map((part, index) => {
+    const partPositions = parts.map((part) => {
       const width = Math.max(PART_MIN_WIDTH, part.name.length * 8)
       const pos = { ...part, x: currentX, width }
       currentX += width + 10
@@ -192,13 +192,7 @@ export function PathwayCanvas({ parts, onPartsChange, onRemovePart }: PathwayCan
       .on('start', function() {
         d3.select(this).raise()
       })
-      .on('drag', function(event, d) {
-        const newX = event.x
-        // Find insertion point
-        const insertIndex = partPositions.findIndex((p, i) => {
-          const midX = p.x + (p as any).width / 2
-          return newX < midX
-        })
+      .on('drag', function(event) {
         d3.select(this).attr('transform', `translate(${event.x}, ${event.y})`)
       })
       .on('end', function(event, d) {

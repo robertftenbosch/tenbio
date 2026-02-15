@@ -12,7 +12,61 @@ services:
       - api-data:/app/data
     environment:
       - DATABASE_URL=sqlite:///./data/parts.db
+      - PROTENIX_SERVICE_URL=http://protenix:8001
+      - ESM_SERVICE_URL=http://esm:8002
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  protenix:
+    build:
+      context: ./protenix-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - protenix-cache:/root/checkpoint
+      - protenix-output:/app/output
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PROTENIX_OUTPUT_DIR=/app/output
+      - PRELOAD_MODEL=protenix_base_default_v1.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  esm:
+    build:
+      context: ./esm-service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - esm-cache:/root/.cache
+      - esm-output:/app/output
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - ESM_OUTPUT_DIR=/app/output
+      - PRELOAD_MODEL=esmfold_v1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   frontend:
     build:
@@ -30,3 +84,7 @@ services:
 
 volumes:
   api-data:
+  protenix-cache:
+  protenix-output:
+  esm-cache:
+  esm-output:

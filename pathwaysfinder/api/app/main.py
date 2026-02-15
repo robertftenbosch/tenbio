@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine, Base
-from app.routes import parts, optimize, igem, kegg, uniprot
+from app.routes import parts, optimize, igem, kegg, uniprot, structure
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -19,6 +19,7 @@ API for genetic parts and metabolic pathway design.
 - **iGEM Registry**: Search and import BioBrick parts from iGEM
 - **KEGG Pathways**: Search metabolic pathways and enzymes
 - **UniProt Proteins**: Search protein sequences and annotations
+- **Structure Prediction**: 3D structure prediction via Protenix (AlphaFold 3)
 
 ## External API Integration
 
@@ -45,6 +46,7 @@ app.include_router(optimize.router)
 app.include_router(igem.router)
 app.include_router(kegg.router)
 app.include_router(uniprot.router)
+app.include_router(structure.router)
 
 
 @app.get("/health")

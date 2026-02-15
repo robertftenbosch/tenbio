@@ -9,6 +9,7 @@ from app.external_apis.kegg import (
     get_pathway_genes,
     search_enzymes,
     get_enzyme_info,
+    get_enzyme_genes,
     get_gene_info,
     get_gene_sequence,
     get_organism_code,
@@ -170,6 +171,38 @@ async def get_enzyme(ec_number: str):
         product=info.get("product"),
         url=f"https://www.kegg.jp/entry/ec:{ec_number}"
     )
+
+
+@router.get("/enzymes/{ec_number}/genes", response_model=list[GeneResponse])
+async def get_genes_for_enzyme(
+    ec_number: str,
+    organism: str = Query("ecoli", description="Organism: ecoli, yeast"),
+    include_sequence: bool = Query(False, description="Include nucleotide sequences (slower)"),
+):
+    """
+    Get genes that encode a specific enzyme for a given organism.
+
+    Example: 1.7.1.4 (nitrate reductase) for E. coli
+    """
+    org_code = get_organism_code(organism)
+    genes = await get_enzyme_genes(ec_number, organism=org_code)
+
+    results = []
+    for gene in genes[:20]:  # Limit to 20 genes
+        gene_data = GeneResponse(
+            id=gene.get("id", ""),
+            name=gene.get("name"),
+            definition=gene.get("definition"),
+            organism=gene.get("organism"),
+        )
+
+        if include_sequence:
+            seq = await get_gene_sequence(gene.get("id", ""))
+            gene_data.sequence = seq
+
+        results.append(gene_data)
+
+    return results
 
 
 @router.get("/genes/{gene_id}", response_model=GeneResponse)

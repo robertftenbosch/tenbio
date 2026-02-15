@@ -4,8 +4,9 @@ import { SearchFilter, FilterOptions } from './components/PartsLibrary/SearchFil
 import { UnifiedSearch } from './components/UnifiedSearch/UnifiedSearch'
 import { PathwayDesigner } from './components/PathwayCanvas/PathwayDesigner'
 import { CodonOptimizer } from './components/CodonOptimizer/CodonOptimizer'
+import { StructurePredictor } from './components/StructurePredictor/StructurePredictor'
 
-type Tab = 'library' | 'search' | 'designer' | 'optimizer'
+type Tab = 'library' | 'search' | 'designer' | 'optimizer' | 'structure'
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('library')
@@ -14,6 +15,14 @@ function App() {
     type: '',
     organism: '',
   })
+  const [structureSequence, setStructureSequence] = useState<string | undefined>()
+  const [structureName, setStructureName] = useState<string | undefined>()
+
+  const navigateToStructure = (sequence: string, name?: string) => {
+    setStructureSequence(sequence)
+    setStructureName(name)
+    setActiveTab('structure')
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -68,6 +77,16 @@ function App() {
             >
               Codon Optimizer
             </button>
+            <button
+              onClick={() => setActiveTab('structure')}
+              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
+                activeTab === 'structure'
+                  ? 'bg-gray-50 text-bio-green-700'
+                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
+              }`}
+            >
+              Structure Predictor
+            </button>
           </nav>
         </div>
       </header>
@@ -76,7 +95,7 @@ function App() {
         {activeTab === 'library' && (
           <>
             <SearchFilter filters={filters} onFilterChange={setFilters} />
-            <PartsList filters={filters} />
+            <PartsList filters={filters} onPredictStructure={navigateToStructure} />
           </>
         )}
         {activeTab === 'search' && (
@@ -85,11 +104,17 @@ function App() {
             <p className="text-gray-600 mb-6">
               Search across local parts, KEGG pathways, UniProt proteins, and iGEM BioBricks.
             </p>
-            <UnifiedSearch />
+            <UnifiedSearch onPredictStructure={navigateToStructure} />
           </>
         )}
         {activeTab === 'designer' && <PathwayDesigner />}
         {activeTab === 'optimizer' && <CodonOptimizer />}
+        {activeTab === 'structure' && (
+          <StructurePredictor
+            initialSequence={structureSequence}
+            initialName={structureName}
+          />
+        )}
       </main>
 
       <footer className="bg-gray-100 border-t mt-12">
