@@ -14,17 +14,18 @@
 - [x] Frontend: preload button met loading spinner en status polling
 
 **Bestanden:**
-- Backend: `protenix-service/app/prediction_worker.py` - `MODEL_CATALOG`, `get_runner()`, `preload_model()`
-- Backend: `protenix-service/app/main.py` - `/preload`, `/models`, startup handler
-- Backend: `protenix-service/app/schemas.py` - `ModelInfo`, `PreloadRequest`, `PreloadResponse`
+- Backend: `services/protenix/app/prediction_worker.py` - `MODEL_CATALOG`, `get_runner()`, `preload_model()`
+- Backend: `services/protenix/app/main.py` - `/preload`, `/models`, startup handler
+- Backend: `services/protenix/app/schemas.py` - `ModelInfo`, `PreloadRequest`, `PreloadResponse`
 - Frontend: `frontend/src/components/StructurePredictor/StructurePredictor.tsx`
 - Frontend: `frontend/src/api/structure.ts` - `preloadModel()`
 - Frontend: `frontend/src/types/structure.ts` - `ProtenixModel` met extra velden
-- Docker: `protenix-service/Dockerfile`, `docker-compose.yml` - `PRELOAD_MODEL` env var
+- Docker: `services/protenix/Dockerfile`, `docker-compose.yml` - `PRELOAD_MODEL` env var
 
 ### ESMFold Service als tweede GPU optie (2026-02-15)
 
-- [x] ESM service (`esm-service/`) met ESMFold structuurvoorspelling
+- [x] ESM service (`services/esm/`) met ESMFold structuurvoorspelling
+- [x] Services verplaatst naar `services/` folder (protenix + esm)
 - [x] Zelfde API contract als Protenix (predict, jobs, models, preload, health)
 - [x] PDB naar CIF conversie via Biopython
 - [x] Model preloading bij startup via `PRELOAD_MODEL=esmfold_v1`
@@ -34,8 +35,8 @@
 - [x] Docker Compose met ESM service (poort 8002, GPU access)
 
 **Bestanden:**
-- ESM Service: `esm-service/app/main.py`, `prediction_worker.py`, `schemas.py`
-- ESM Docker: `esm-service/Dockerfile`, `esm-service/requirements.txt`
+- ESM Service: `services/esm/app/main.py`, `prediction_worker.py`, `schemas.py`
+- ESM Docker: `services/esm/Dockerfile`, `services/esm/requirements.txt`
 - API Routing: `api/app/routes/structure.py` - `_get_service_url()`, `_job_service_map`
 - Docker: `docker-compose.yml` - `esm` service + `ESM_SERVICE_URL` env var
 

@@ -18,7 +18,7 @@ services:
 
   protenix:
     build:
-      context: ./protenix-service
+      context: ./services/protenix
       dockerfile: Dockerfile
     ports:
       - "8001:8001"
@@ -44,7 +44,7 @@ services:
 
   esm:
     build:
-      context: ./esm-service
+      context: ./services/esm
       dockerfile: Dockerfile
     ports:
       - "8002:8002"

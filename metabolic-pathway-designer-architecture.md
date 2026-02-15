@@ -404,7 +404,7 @@ Draait als aparte microservice op poort 8001.
 **Architectuur:**
 
 ```python
-# protenix-service/app/prediction_worker.py
+# services/protenix/app/prediction_worker.py
 
 # Model Registry -- slechts 1 model geladen per keer (GPU VRAM beperking)
 MODEL_CATALOG = {
@@ -464,7 +464,7 @@ Ideaal voor snelle single-chain protein previews zonder MSA search.
 **Architectuur:**
 
 ```python
-# esm-service/app/prediction_worker.py
+# services/esm/app/prediction_worker.py
 
 MODEL_CATALOG = {
     "esmfold_v1": {
@@ -616,7 +616,7 @@ services:
       - ESM_SERVICE_URL=http://esm:8002
 
   protenix:
-    build: ./protenix-service
+    build: ./services/protenix
     ports:
       - "8001:8001"
     volumes:
@@ -635,7 +635,7 @@ services:
               capabilities: [gpu]
 
   esm:
-    build: ./esm-service
+    build: ./services/esm
     ports:
       - "8002:8002"
     volumes:
