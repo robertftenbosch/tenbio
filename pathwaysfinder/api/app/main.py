@@ -5,9 +5,13 @@ from app.database import engine, Base
 from app.models import parts as _parts_model  # noqa: F401  (register with Base.metadata)
 from app.models import pathway as _pathway_model  # noqa: F401  (register with Base.metadata)
 from app.routes import parts, optimize, igem, kegg, uniprot, structure, export, sequencing, pathway, primers
+from seed_data import seed_database
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+
+# Seed database with initial parts if empty
+seed_database()
 
 app = FastAPI(
     title="Tenbio Pathways API",
