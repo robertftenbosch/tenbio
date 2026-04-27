@@ -28,10 +28,11 @@ from app.schemas.design import (
     DesignFromGoalRequest,
     DesignFromGoalResponse,
     DesignIntent,
+    FBASummary,
     PathwayCandidatesResponse,
     ReactionStep,
 )
-from app.services import goal_grounding, pathway_search
+from app.services import fba, goal_grounding, pathway_search
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/design", tags=["design"])
@@ -72,6 +73,60 @@ def _to_pathway_response(raw: dict) -> PathwayCandidatesResponse:
         max_depth_used=raw["max_depth_used"],
         reactions=[ReactionStep(**r) for r in raw["reactions"]],
         notes=raw["notes"],
+    )
+
+
+# Map KEGG organism codes to FBA chassis registry keys. Only chassis
+# whose SBML is in the FBA registry can be FBA'd; everything else
+# silently falls through (no fba field on the response).
+_KEGG_TO_FBA_CHASSIS: dict[str, str] = {
+    "eco": "textbook",
+    # Phase 3 will add: "sce" -> "iMM904", "syn" -> "iSynCJ816",
+    # "ppa" -> "iLB1027_lipid", etc.
+}
+
+
+def _run_intent_fba(intent: DesignIntent, kegg_organism: str) -> FBASummary | None:
+    """Best-effort FBA on the chassis matching the intent.
+
+    Returns an FBASummary when the resolved chassis is in the FBA
+    registry, None otherwise. Any exception inside cobra is caught and
+    surfaced as None — the natural-language flow shouldn't break because
+    the LP solver hiccupped.
+    """
+    chassis_key = _KEGG_TO_FBA_CHASSIS.get(kegg_organism)
+    if not chassis_key:
+        return None
+
+    try:
+        # Find a target exchange first; needs the loaded model.
+        model = fba.get_model(chassis_key)
+        target = fba.find_target_exchange(
+            model, intent.target.kegg_id, intent.target.name
+        )
+
+        if target:
+            result = fba.run_fba(
+                chassis_key,
+                target_reaction=target,
+                objective="target",
+                flux_limit=1,  # we don't need the flux distribution here
+            )
+        else:
+            result = fba.run_fba(chassis_key, flux_limit=1)
+    except Exception as e:
+        logger.warning(f"Intent FBA on chassis '{chassis_key}' failed: {e}")
+        return None
+
+    return FBASummary(
+        chassis=result.chassis,
+        objective_id=result.objective_id,
+        objective_value=result.objective_value,
+        growth_rate=result.growth_rate,
+        target_reaction=result.target_reaction,
+        target_flux=result.target_flux,
+        status=result.status,
+        notes=result.notes,
     )
 
 
@@ -137,8 +192,9 @@ async def design_from_goal(req: DesignFromGoalRequest):
     intent = DesignIntent(**result["intent"])
 
     pathway_response = None
+    fba_summary: FBASummary | None = None
+    host = _resolve_host(intent, req.host)
     if req.materialize and intent.target.kegg_id:
-        host = _resolve_host(intent, req.host)
         try:
             raw = await pathway_search.search_pathway(
                 intent.target.kegg_id, host_organism=host, max_depth=req.max_depth
@@ -149,12 +205,19 @@ async def design_from_goal(req: DesignFromGoalRequest):
             # out we still want to return the parsed intent.
             logger.warning(f"Materialization failed for {intent.target.kegg_id}: {e}")
 
+    # FBA is independent of the KEGG pathway materialization — even when
+    # the KEGG retro search returns nothing, a chassis-level biomass FBA
+    # tells the user "yes the chosen host can grow on default media."
+    if req.materialize:
+        fba_summary = _run_intent_fba(intent, host)
+
     return DesignFromGoalResponse(
         intent=intent,
         candidate_kegg_count=len(kegg_candidates),
         candidate_uniprot_count=len(uniprot_candidates),
         model_used=result.get("model_used"),
         pathway_candidates=pathway_response,
+        fba=fba_summary,
     )
 
 

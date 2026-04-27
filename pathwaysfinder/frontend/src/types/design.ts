@@ -62,12 +62,24 @@ export interface DesignFromGoalRequest {
   max_depth?: number
 }
 
+export interface FBASummary {
+  chassis: string
+  objective_id: string
+  objective_value: number
+  growth_rate: number
+  target_reaction: string | null
+  target_flux: number | null
+  status: string
+  notes: string[]
+}
+
 export interface DesignFromGoalResponse {
   intent: DesignIntent
   candidate_kegg_count: number
   candidate_uniprot_count: number
   model_used: string | null
   pathway_candidates: PathwayCandidatesResponse | null
+  fba: FBASummary | null
 }
 
 export interface DesignFromCompoundRequest {
