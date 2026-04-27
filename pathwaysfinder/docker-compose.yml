@@ -14,6 +14,7 @@ services:
       - DATABASE_URL=sqlite:///./data/parts.db
       - PROTENIX_SERVICE_URL=http://protenix:8001
       - ESM_SERVICE_URL=http://esm:8002
+      - LLM_SERVICE_URL=http://llm:8003
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   protenix:
@@ -68,6 +69,50 @@ services:
       timeout: 10s
       retries: 3
 
+  ollama:
+    # Upstream Ollama image with CUDA runtime baked in. The model itself
+    # is pulled on first call to /goal/parse (or eagerly on startup if
+    # the llm service has LLM_PRELOAD=true). Models live in the
+    # ollama-models volume so a container restart doesn't re-download.
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  llm:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      # Override to gemma4:9b once available on the Ollama registry.
+      - LLM_MODEL=${LLM_MODEL:-gemma3:9b}
+      - LLM_PRELOAD=${LLM_PRELOAD:-true}
+    depends_on:
+      - ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   frontend:
     build:
       context: ./frontend
@@ -88,3 +133,4 @@ volumes:
   protenix-output:
   esm-cache:
   esm-output:
+  ollama-models:
