@@ -238,3 +238,61 @@ def test_chat_endpoint_returns_content(client):
         )
     assert r.status_code == 200
     assert r.json()["content"] == "Ja, dat klopt."
+
+
+def _parse_sse(body: str) -> list[dict]:
+    """Pull JSON payloads out of an SSE response body."""
+    events: list[dict] = []
+    for line in body.split("\n"):
+        if line.startswith("data: "):
+            events.append(json.loads(line[len("data: "):]))
+    return events
+
+
+def test_chat_stream_emits_tokens_then_done(client):
+    """Streaming endpoint yields each token as an SSE event + a final done."""
+
+    async def fake_stream(*_args, **_kwargs):
+        for tok in ["Hallo", " wereld", "."]:
+            yield tok
+
+    with patch("app.main._client.chat_stream", fake_stream):
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json={
+                "messages": [{"role": "user", "content": "Zeg hallo"}],
+                "temperature": 0.1,
+                "max_tokens": 64,
+            },
+        ) as r:
+            assert r.status_code == 200
+            assert r.headers["content-type"].startswith("text/event-stream")
+            body = "".join(r.iter_text())
+
+    events = _parse_sse(body)
+    tokens = [e["token"] for e in events if "token" in e]
+    assert tokens == ["Hallo", " wereld", "."]
+    assert any(e.get("done") is True for e in events)
+
+
+def test_chat_stream_error_mid_stream(client):
+    """An exception while streaming becomes an `error` event before `done`."""
+
+    async def fake_stream(*_args, **_kwargs):
+        yield "Beginning"
+        raise RuntimeError("ollama crashed")
+
+    with patch("app.main._client.chat_stream", fake_stream):
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json={"messages": [{"role": "user", "content": "x"}]},
+        ) as r:
+            assert r.status_code == 200
+            body = "".join(r.iter_text())
+
+    events = _parse_sse(body)
+    assert any(e.get("token") == "Beginning" for e in events)
+    assert any("ollama crashed" in (e.get("error") or "") for e in events)
+    assert any(e.get("done") is True for e in events)

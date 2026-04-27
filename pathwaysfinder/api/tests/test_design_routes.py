@@ -480,3 +480,99 @@ def test_grounding_falls_back_to_longest_token():
     cpd, prot = _extract_keywords("foobarbazquux")
     assert cpd == ["foobarbazquux"]
     assert prot == []
+
+
+# ---------------------------------------------------------------------------
+# /chat/stream
+# ---------------------------------------------------------------------------
+
+
+def _parse_sse(body: str) -> list[dict]:
+    import json as _json
+
+    return [
+        _json.loads(line[len("data: "):])
+        for line in body.split("\n")
+        if line.startswith("data: ")
+    ]
+
+
+def test_chat_stream_passes_through_token_events(client):
+    """Stream chunks from the LLM service are forwarded verbatim to the client."""
+    sse_chunks = [
+        b'data: {"token": "Hallo"}\n\n',
+        b'data: {"token": " wereld"}\n\n',
+        b'data: {"done": true}\n\n',
+    ]
+
+    async def fake_stream(*_args, **_kwargs):
+        for c in sse_chunks:
+            yield c
+
+    with patch(
+        "app.routes.design.llm_client.stream_chat", fake_stream
+    ):
+        with client.stream(
+            "POST",
+            "/api/v1/design/chat/stream",
+            json={"messages": [{"role": "user", "content": "Hallo"}]},
+        ) as r:
+            assert r.status_code == 200
+            assert r.headers["content-type"].startswith("text/event-stream")
+            body = "".join(r.iter_text())
+
+    events = _parse_sse(body)
+    assert any(e.get("token") == "Hallo" for e in events)
+    assert any(e.get("token") == " wereld" for e in events)
+    assert any(e.get("done") is True for e in events)
+
+
+def test_chat_stream_includes_intent_context(client, ammonia_llm_response):
+    """When an intent is sent, the LLM gets a system message preamble for it."""
+    captured: list[list[dict]] = []
+
+    async def fake_stream(messages, **_kwargs):
+        captured.append(messages)
+        yield b'data: {"done": true}\n\n'
+
+    with patch("app.routes.design.llm_client.stream_chat", fake_stream):
+        with client.stream(
+            "POST",
+            "/api/v1/design/chat/stream",
+            json={
+                "messages": [{"role": "user", "content": "Waarom anammox?"}],
+                "intent": ammonia_llm_response["intent"],
+            },
+        ) as r:
+            list(r.iter_text())
+
+    assert len(captured) == 1
+    sent = captured[0]
+    # Two system messages (base + intent), then user.
+    assert sent[0]["role"] == "system"
+    assert sent[1]["role"] == "system"
+    assert "Anammox" in sent[1]["content"] or "anammox" in sent[1]["content"]
+    assert "feasibility note" in sent[1]["content"].lower()
+    assert sent[-1] == {"role": "user", "content": "Waarom anammox?"}
+
+
+def test_chat_stream_emits_error_when_llm_unreachable(client):
+    """LLMServiceError mid-stream surfaces as an SSE error+done pair."""
+    from app.external_apis.llm_client import LLMServiceError
+
+    async def fake_stream(*_args, **_kwargs):
+        raise LLMServiceError("ollama down")
+        yield b""  # unreachable; here so the function is async-iterable
+
+    with patch("app.routes.design.llm_client.stream_chat", fake_stream):
+        with client.stream(
+            "POST",
+            "/api/v1/design/chat/stream",
+            json={"messages": [{"role": "user", "content": "x"}]},
+        ) as r:
+            assert r.status_code == 200
+            body = "".join(r.iter_text())
+
+    events = _parse_sse(body)
+    assert any("ollama down" in (e.get("error") or "") for e in events)
+    assert any(e.get("done") is True for e in events)

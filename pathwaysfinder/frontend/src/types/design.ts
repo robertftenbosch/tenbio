@@ -75,3 +75,24 @@ export interface DesignFromCompoundRequest {
   host?: string
   max_depth?: number
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+export interface ChatStreamRequest {
+  messages: ChatMessage[]
+  intent?: DesignIntent | null
+  temperature?: number
+  max_tokens?: number
+}
+
+/**
+ * SSE events emitted by /api/v1/design/chat/stream. Always exactly one
+ * of `token`, `error`, or `done` is set.
+ */
+export type ChatStreamEvent =
+  | { token: string }
+  | { error: string }
+  | { done: true; model?: string }

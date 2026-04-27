@@ -19,9 +19,11 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.external_apis import llm_client
 from app.schemas.design import (
+    ChatStreamRequest,
     DesignFromCompoundRequest,
     DesignFromGoalRequest,
     DesignFromGoalResponse,
@@ -153,4 +155,77 @@ async def design_from_goal(req: DesignFromGoalRequest):
         candidate_uniprot_count=len(uniprot_candidates),
         model_used=result.get("model_used"),
         pathway_candidates=pathway_response,
+    )
+
+
+# ---------------------------------------------------------------------------
+
+
+_CHAT_SYSTEM_PROMPT = (
+    "You are a synthetic-biology assistant inside the Tenbio platform. "
+    "Answer concisely (3-6 sentences unless the user asks for more) and "
+    "stay grounded in real biology: don't invent EC numbers, gene IDs, "
+    "or iGEM part codes. If the user asks something outside synthetic "
+    "biology, politely redirect. Match the user's language."
+)
+
+
+def _intent_context(intent: DesignIntent) -> str:
+    """Render a DesignIntent as a compact system-message preamble."""
+    parts = [
+        f"User is currently looking at this parsed design intent:",
+        f"  query: {intent.raw_query!r}",
+        f"  target: {intent.target.name} ({intent.target.kind})",
+    ]
+    if intent.target.kegg_id:
+        parts.append(f"  kegg_id: {intent.target.kegg_id}")
+    if intent.target.uniprot_id:
+        parts.append(f"  uniprot_id: {intent.target.uniprot_id}")
+    parts.append(f"  candidate hosts: {', '.join(intent.host_candidates)}")
+    if intent.optimization_metric:
+        parts.append(f"  optimize for: {intent.optimization_metric}")
+    if intent.constraints:
+        parts.append(f"  constraints: {'; '.join(intent.constraints)}")
+    parts.append(f"  feasibility note: {intent.feasibility_note}")
+    parts.append(f"  confidence: {intent.confidence}")
+    parts.append("Use this as context when answering follow-up questions.")
+    return "\n".join(parts)
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatStreamRequest):
+    """Server-sent-events stream proxying the LLM service.
+
+    Optionally takes a DesignIntent so follow-up questions stay grounded
+    in the user's current goal. Yields `data: {token|error|done}\\n\\n`
+    events; the frontend consumes them via fetch + ReadableStream.
+    """
+    messages: list[dict] = [{"role": "system", "content": _CHAT_SYSTEM_PROMPT}]
+    if req.intent is not None:
+        messages.append({"role": "system", "content": _intent_context(req.intent)})
+    messages.extend([m.model_dump() for m in req.messages])
+
+    async def passthrough():
+        try:
+            async for chunk in llm_client.stream_chat(
+                messages, temperature=req.temperature, max_tokens=req.max_tokens
+            ):
+                yield chunk
+        except llm_client.LLMServiceError as e:
+            # Best-effort error event in SSE format so the frontend can
+            # show it without parsing an HTTP error after streaming began.
+            import json as _json
+
+            yield (
+                f"data: {_json.dumps({'error': str(e)})}\n\n"
+                f"data: {_json.dumps({'done': True})}\n\n"
+            ).encode()
+
+    return StreamingResponse(
+        passthrough(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
