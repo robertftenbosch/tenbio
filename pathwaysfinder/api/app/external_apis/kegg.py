@@ -16,10 +16,12 @@ and deduplicate. Adds an in-memory LRU cache on gene lookups to avoid
 hammering KEGG's REST endpoint (20 lookups per enzyme call was the bottleneck).
 """
 
-import httpx
-from typing import Optional
-from functools import lru_cache
 import asyncio
+import re
+from functools import lru_cache
+from typing import Optional
+
+import httpx
 
 
 # KEGG REST API base URL
@@ -73,6 +75,78 @@ async def search_compounds(query: str, limit: int = 20) -> list[dict]:
                 }
             )
         return results
+
+
+# ------------------------- Compound + reaction lookup --------------------
+
+async def get_compound_info(cpd_id: str) -> Optional[dict]:
+    """Fetch a KEGG compound entry.
+
+    Returns a dict with `id`, `name`, `formula`, `reaction_ids` (list of
+    rn:RXXXXX strings), `pathway_ids`, `enzyme_ids`. None on miss.
+    """
+    cpd_id = cpd_id if cpd_id.startswith("cpd:") else f"cpd:{cpd_id}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        text = await _kegg_get(client, f"/get/{cpd_id}")
+    if not text:
+        return None
+    raw = parse_kegg_entry(text, "compound")
+    name = raw.get("name", "").split("\n")[0].strip().rstrip(";")
+    reaction_ids = re.findall(r"R\d{5}", raw.get("reaction", "") or "")
+    pathway_ids = re.findall(r"map\d{5}", raw.get("pathway", "") or "")
+    ec_numbers = re.findall(r"\d+\.\d+\.\d+\.\d+", raw.get("enzyme", "") or "")
+    return {
+        "id": cpd_id,
+        "name": name,
+        "formula": raw.get("formula", "").strip() or None,
+        "reaction_ids": [f"rn:{r}" for r in reaction_ids],
+        "pathway_ids": pathway_ids,
+        "enzyme_ec": ec_numbers,
+    }
+
+
+async def get_reaction_info(rn_id: str) -> Optional[dict]:
+    """Fetch a KEGG reaction entry, parsing the equation into sides.
+
+    Returns dict with `id`, `name`, `equation` (raw), `left_compounds`,
+    `right_compounds` (each a list of cpd:Cxxxxx), and `ec_numbers`.
+    KEGG reactions are direction-neutral; downstream code decides which
+    side is "substrate" based on the BFS context.
+    """
+    rn_id = rn_id if rn_id.startswith("rn:") else f"rn:{rn_id}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        text = await _kegg_get(client, f"/get/{rn_id}")
+    if not text:
+        return None
+    raw = parse_kegg_entry(text, "reaction")
+    equation = (raw.get("equation") or "").replace("\n", " ").strip()
+    name = (raw.get("name") or "").split("\n")[0].strip()
+
+    # KEGG separator is <=>, sometimes ⇌ in display copies. Split on either.
+    sides = re.split(r"<=>|⇌|=>|<=", equation)
+    left = re.findall(r"C\d{5}", sides[0]) if len(sides) >= 1 else []
+    right = re.findall(r"C\d{5}", sides[1]) if len(sides) >= 2 else []
+
+    return {
+        "id": rn_id,
+        "name": name,
+        "equation": equation,
+        "left_compounds": [f"cpd:{c}" for c in left],
+        "right_compounds": [f"cpd:{c}" for c in right],
+        "ec_numbers": re.findall(r"\d+\.\d+\.\d+\.\d+", raw.get("enzyme", "") or ""),
+    }
+
+
+async def get_reactions_producing(cpd_id: str) -> list[str]:
+    """Return KEGG reaction IDs where the compound appears.
+
+    KEGG reactions are direction-neutral; this returns every reaction
+    involving the compound (as substrate or product). The caller must
+    inspect each reaction's left/right sides to decide retrosynthetic
+    direction.
+    """
+    info = await get_compound_info(cpd_id)
+    return info["reaction_ids"] if info else []
 
 
 # ------------------------- Pathway search / detail -------------------------
