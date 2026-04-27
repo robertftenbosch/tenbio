@@ -1,9 +1,9 @@
 # LLM Service — Implementation Plan
 
-A third GPU service alongside Protenix and ESMFold. Hosts the latest Gemma
-(Gemma 4, falling back to Gemma 3 9B if the v4 weights are not yet
-available at implementation time) and exposes a small, opinionated API
-that the main API can call.
+A third GPU service alongside Protenix and ESMFold. Hosts the latest
+Gemma — current default is **`gemma4:e4b`**; older drops like
+`gemma3:9b` and `gemma3:4b` work as drop-ins via the `LLM_MODEL` env
+var. Exposes a small, opinionated API that the main API can call.
 
 ## 1. Goal
 
@@ -70,23 +70,22 @@ network. Same `NVIDIA_VISIBLE_DEVICES` constraint as a known follow-up.
 
 ## 4. Model Choice
 
-| Model | Params | INT4 VRAM | Use |
-|---|---|---|---|
-| **Gemma 4 9B (target)** | ~9B | ~5–6 GB | Primary, if released |
-| Gemma 3 9B (fallback) | 9B | ~5.5 GB | Drop-in if v4 unavailable |
-| Gemma 3 4B (constrained) | 4B | ~2.5 GB | If we need to share GPU with ESMFold loaded |
-| Gemma 3 27B | 27B | ~16 GB | Quality, but eats most of the A6000 |
+| Model | Ollama tag | Use |
+|---|---|---|
+| **Gemma 4 (default)** | `gemma4:e4b` | Primary; current default |
+| Gemma 3 9B | `gemma3:9b` | Older drop-in if v4 weights unavailable in your registry |
+| Gemma 3 4B | `gemma3:4b` | Low-VRAM machines or when sharing GPU with a loaded ESMFold |
+| Gemma 3 27B | `gemma3:27b` | Quality, but eats most of the A6000 |
 
-**Default**: Gemma 4 9B at INT4. Pinned via env var `LLM_MODEL` so we can
-swap easily.
+**Default**: `gemma4:e4b`. Pinned via env var `LLM_MODEL` so we can
+swap easily — the serving stack treats it as opaque.
 
 Why Gemma over Llama / Phi / Mistral?
 
 - Native function-calling support
 - Permissive license for commercial use
 - Multi-language including Dutch (the user types in Dutch)
-- Good size:quality ratio at 9B
-- Active Google maintenance
+- Active Google maintenance, fast new-version cadence
 
 ## 5. Serving Stack
 
@@ -327,9 +326,10 @@ PRs 1–3 are independent enough to run in parallel. PR 4 depends on PRs
 
 ## 13. Open Questions / Risks
 
-1. **Will Gemma 4 weights be available at implementation time?** If not,
-   ship with Gemma 3 9B and bump later via env var. The serving stack
-   doesn't care.
+1. **Model availability.** Default is `gemma4:e4b`; if a target machine
+   doesn't have a compatible Ollama registry / driver pair, override
+   via `LLM_MODEL=gemma3:9b` or `gemma3:4b`. The serving stack treats
+   the model name as opaque.
 
 2. **Hallucinated KEGG IDs.** Even with grounding + system prompt
    constraints, the LLM may still produce wrong IDs. Mitigation: every

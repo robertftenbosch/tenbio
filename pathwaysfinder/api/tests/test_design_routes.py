@@ -34,7 +34,7 @@ def ammonia_llm_response():
             "feasibility_note": "Anammox is real but slow.",
             "confidence": "medium",
         },
-        "model_used": "gemma3:9b",
+        "model_used": "gemma4:e4b",
         "raw_llm_output": "{...}",
     }
 
@@ -142,7 +142,7 @@ def test_from_goal_no_kegg_id_skips_materialize(client):
             "feasibility_note": "ok",
             "confidence": "high",
         },
-        "model_used": "gemma3:9b",
+        "model_used": "gemma4:e4b",
     }
     with patch(
         "app.routes.design.goal_grounding.build_candidates",
