@@ -106,7 +106,13 @@ services:
       - LLM_MODEL=${LLM_MODEL:-gemma3:9b}
       - LLM_PRELOAD=${LLM_PRELOAD:-true}
     depends_on:
-      - ollama
+      ollama:
+        # Wait for ollama to be HEALTHY (daemon ready), not just
+        # started. Without this, the llm container's startup-time
+        # `ollama pull` and the first /goal/parse request can fail
+        # with `Temporary failure in name resolution` because Docker
+        # DNS hasn't fully propagated when llm hits ollama:11434.
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
