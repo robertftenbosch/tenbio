@@ -1,6 +1,6 @@
 """FastAPI app for the LLM service.
 
-Wraps a local Ollama instance running Gemma (default: gemma3:9b; override
+Wraps a local Ollama instance running Gemma (default: gemma4:e4b; override
 via LLM_MODEL env var to e.g. gemma4:e4b once available).
 
 Endpoints:
