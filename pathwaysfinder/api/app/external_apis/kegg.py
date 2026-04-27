@@ -43,6 +43,38 @@ async def _kegg_get(client: httpx.AsyncClient, path: str) -> Optional[str]:
             return None
 
 
+# ------------------------- Compound search (for goal grounding) -----------
+
+async def search_compounds(query: str, limit: int = 20) -> list[dict]:
+    """Search KEGG compounds by keyword.
+
+    Used by the goal-parsing flow to give the LLM a grounded list of
+    candidate compound IDs rather than letting it hallucinate. KEGG's
+    /find/compound endpoint returns lines of `cpd:Cxxxxx<TAB>name1; name2; ...`.
+
+    Returns a list of {"id": "cpd:Cxxxxx", "name": "...", "synonyms": [...]}.
+    """
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        text = await _kegg_get(client, f"/find/compound/{query}")
+        if not text:
+            return []
+        results = []
+        for line in text.strip().split("\n")[:limit]:
+            if "\t" not in line:
+                continue
+            cpd_id, names = line.split("\t", 1)
+            parts = [n.strip() for n in names.split(";") if n.strip()]
+            primary = parts[0] if parts else ""
+            results.append(
+                {
+                    "id": cpd_id.strip(),
+                    "name": primary,
+                    "synonyms": parts[1:] if len(parts) > 1 else [],
+                }
+            )
+        return results
+
+
 # ------------------------- Pathway search / detail -------------------------
 
 async def search_kegg_pathways(query: str, organism: str = "eco", limit: int = 10) -> list[dict]:

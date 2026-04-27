@@ -5,7 +5,7 @@ from app.database import engine, Base
 from app.models import parts as _parts_model  # noqa: F401  (register with Base.metadata)
 from app.models import pathway as _pathway_model  # noqa: F401  (register with Base.metadata)
 from app.models import prediction_job as _prediction_job_model  # noqa: F401  (register with Base.metadata)
-from app.routes import parts, optimize, igem, kegg, uniprot, structure, export, sequencing, pathway, primers
+from app.routes import parts, optimize, igem, kegg, uniprot, structure, export, sequencing, pathway, primers, design
 from seed_data import seed_database
 
 # Create database tables
@@ -60,6 +60,7 @@ app.include_router(export.router)
 app.include_router(sequencing.router)
 app.include_router(pathway.router)
 app.include_router(primers.router)
+app.include_router(design.router)
 
 
 @app.get("/health")
