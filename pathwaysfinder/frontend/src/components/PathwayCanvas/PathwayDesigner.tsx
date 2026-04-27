@@ -5,6 +5,7 @@ import { useParts } from '../../hooks/useParts'
 import { PartCard } from '../PartsLibrary/PartCard'
 import { PathwayCanvas } from './PathwayCanvas'
 import { KeggImportModal } from './KeggImportModal'
+import { SimulationPanel } from '../Simulation/SimulationPanel'
 import { exportSbol3, importSequencing } from '../../api/exportImport'
 
 interface PathwayPart extends Part {
@@ -35,6 +36,7 @@ export function PathwayDesigner({
   const [selectedType, setSelectedType] = useState<string>('')
   const [showExport, setShowExport] = useState(false)
   const [showKeggImport, setShowKeggImport] = useState(false)
+  const [showSimulation, setShowSimulation] = useState(false)
   const [importedParts, setImportedParts] = useState<Part[]>([])
 
   // One-shot injection from a sibling tab. Dedupe on id so re-clicks
@@ -337,6 +339,12 @@ ${formatGenbankSequence(sequence)}
                   Export
                 </button>
                 <button
+                  onClick={() => setShowSimulation(!showSimulation)}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
+                >
+                  Simulate
+                </button>
+                <button
                   onClick={() => setShowSequencing(!showSequencing)}
                   className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700"
                 >
@@ -420,6 +428,16 @@ ${formatGenbankSequence(sequence)}
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Simulation panel — FBA on a chassis genome-scale model.
+              Independent of the pathway's actual reactions for now;
+              pathway → reaction-set bridging is the Phase 2 follow-up
+              that will overlay the user's parts onto the chassis. */}
+          {showSimulation && pathwayParts.length > 0 && (
+            <div className="mb-4">
+              <SimulationPanel />
             </div>
           )}
 
