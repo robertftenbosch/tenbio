@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Part } from '../../types/parts'
 import { SequencingImportResponse, Sbol3Format } from '../../types/export'
 import { useParts } from '../../hooks/useParts'
@@ -13,12 +13,41 @@ interface PathwayPart extends Part {
   instanceId: string  // Unique ID for each instance in pathway
 }
 
-export function PathwayDesigner() {
+interface PathwayDesignerProps {
+  /**
+   * Parts injected from another tab (e.g. AI Designer's "use this design"
+   * hand-off). They appear in the parts panel under the "imported" set,
+   * same channel the KEGG import modal uses.
+   */
+  injectedImportedParts?: Part[]
+  /**
+   * Called once after injectedImportedParts has been consumed, so the
+   * parent can clear its own state and not re-inject on subsequent renders.
+   */
+  onInjectedConsumed?: () => void
+}
+
+export function PathwayDesigner({
+  injectedImportedParts,
+  onInjectedConsumed,
+}: PathwayDesignerProps = {}) {
   const [pathwayParts, setPathwayParts] = useState<PathwayPart[]>([])
   const [selectedType, setSelectedType] = useState<string>('')
   const [showExport, setShowExport] = useState(false)
   const [showKeggImport, setShowKeggImport] = useState(false)
   const [importedParts, setImportedParts] = useState<Part[]>([])
+
+  // One-shot injection from a sibling tab. Dedupe on id so re-clicks
+  // from the AI Designer don't pile up duplicate entries.
+  useEffect(() => {
+    if (!injectedImportedParts || injectedImportedParts.length === 0) return
+    setImportedParts((prev) => {
+      const existingIds = new Set(prev.map((p) => p.id))
+      const fresh = injectedImportedParts.filter((p) => !existingIds.has(p.id))
+      return fresh.length === 0 ? prev : [...prev, ...fresh]
+    })
+    onInjectedConsumed?.()
+  }, [injectedImportedParts, onInjectedConsumed])
 
   // SBOL3 export state
   const [sbol3Format, setSbol3Format] = useState<Sbol3Format>('json-ld')

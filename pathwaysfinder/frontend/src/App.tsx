@@ -5,8 +5,19 @@ import { UnifiedSearch } from './components/UnifiedSearch/UnifiedSearch'
 import { PathwayDesigner } from './components/PathwayCanvas/PathwayDesigner'
 import { CodonOptimizer } from './components/CodonOptimizer/CodonOptimizer'
 import { StructurePredictor } from './components/StructurePredictor/StructurePredictor'
+import { AIDesigner } from './components/AIDesigner/AIDesigner'
+import { Part } from './types/parts'
 
-type Tab = 'library' | 'search' | 'designer' | 'optimizer' | 'structure'
+type Tab = 'library' | 'search' | 'ai' | 'designer' | 'optimizer' | 'structure'
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'library', label: 'Parts Library' },
+  { id: 'search', label: 'Search Databases' },
+  { id: 'ai', label: 'AI Designer' },
+  { id: 'designer', label: 'Pathway Designer' },
+  { id: 'optimizer', label: 'Codon Optimizer' },
+  { id: 'structure', label: 'Structure Predictor' },
+]
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('library')
@@ -17,11 +28,17 @@ function App() {
   })
   const [structureSequence, setStructureSequence] = useState<string | undefined>()
   const [structureName, setStructureName] = useState<string | undefined>()
+  const [pendingDesignerParts, setPendingDesignerParts] = useState<Part[]>([])
 
   const navigateToStructure = (sequence: string, name?: string) => {
     setStructureSequence(sequence)
     setStructureName(name)
     setActiveTab('structure')
+  }
+
+  const handleAIDesignHandoff = (parts: Part[]) => {
+    setPendingDesignerParts(parts)
+    setActiveTab('designer')
   }
 
   return (
@@ -36,57 +53,20 @@ function App() {
 
         {/* Tabs */}
         <div className="max-w-7xl mx-auto px-4">
-          <nav className="flex gap-1">
-            <button
-              onClick={() => setActiveTab('library')}
-              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
-                activeTab === 'library'
-                  ? 'bg-gray-50 text-bio-green-700'
-                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
-              }`}
-            >
-              Parts Library
-            </button>
-            <button
-              onClick={() => setActiveTab('search')}
-              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
-                activeTab === 'search'
-                  ? 'bg-gray-50 text-bio-green-700'
-                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
-              }`}
-            >
-              Search Databases
-            </button>
-            <button
-              onClick={() => setActiveTab('designer')}
-              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
-                activeTab === 'designer'
-                  ? 'bg-gray-50 text-bio-green-700'
-                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
-              }`}
-            >
-              Pathway Designer
-            </button>
-            <button
-              onClick={() => setActiveTab('optimizer')}
-              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
-                activeTab === 'optimizer'
-                  ? 'bg-gray-50 text-bio-green-700'
-                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
-              }`}
-            >
-              Codon Optimizer
-            </button>
-            <button
-              onClick={() => setActiveTab('structure')}
-              className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
-                activeTab === 'structure'
-                  ? 'bg-gray-50 text-bio-green-700'
-                  : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
-              }`}
-            >
-              Structure Predictor
-            </button>
+          <nav className="flex gap-1 flex-wrap">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-gray-50 text-bio-green-700'
+                    : 'text-bio-green-100 hover:text-white hover:bg-bio-green-600'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </nav>
         </div>
       </header>
@@ -107,7 +87,13 @@ function App() {
             <UnifiedSearch onPredictStructure={navigateToStructure} />
           </>
         )}
-        {activeTab === 'designer' && <PathwayDesigner />}
+        {activeTab === 'ai' && <AIDesigner onUseDesign={handleAIDesignHandoff} />}
+        {activeTab === 'designer' && (
+          <PathwayDesigner
+            injectedImportedParts={pendingDesignerParts}
+            onInjectedConsumed={() => setPendingDesignerParts([])}
+          />
+        )}
         {activeTab === 'optimizer' && <CodonOptimizer />}
         {activeTab === 'structure' && (
           <StructurePredictor
