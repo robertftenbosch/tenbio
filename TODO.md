@@ -1,71 +1,69 @@
 # Tenbio Roadmap
 
-## Parts Library Uitbreiden
+Status overview at the project level. Day-to-day open issues live in
+[`pathwaysfinder/TODO.md`](pathwaysfinder/TODO.md) — start there for items
+that are actively being worked on.
 
-- [ ] **Add detail view for parts**
-  - Make parts clickable to show a modal or separate page with full details
-  - Complete sequence with copy-to-clipboard
-  - Metadata weergave
-  - Links naar relevante research papers (PubMed, DOI)
-  - References field toevoegen aan Part model
+## Delivered
 
-- [ ] **Add create/edit parts UI**
-  - Form voor nieuwe parts aanmaken
-  - Bestaande parts kunnen bewerken
-  - Validatie voor required fields (name, type, sequence)
+### Parts Library
+- [x] Part detail view with sequence + metadata (`PartDetailModal`)
+- [x] Create / edit / delete UI for parts (`PartFormModal`)
+- [x] Seed data with reference parts; bulk import via the iGEM Registry API
+- [x] Linked PubMed search per part (paper titles, abstracts, DOIs)
 
-- [ ] **Import more iGEM parts**
-  - Seed data uitbreiden met meer iGEM Registry parts
-  - Eventueel iGEM API parsen voor bulk import
+### Pathway Designer
+- [x] D3.js canvas (`PathwayCanvas`) with drag-and-drop assembly
+- [x] KEGG pathway import modal (`KeggImportModal`)
 
-## Pathway Designer
+### Backend / Codon Optimization
+- [x] FastAPI service with the full `/api/v1/*` surface
+- [x] `POST /api/v1/optimize/*` (protein → codon-optimized DNA, translate)
+- [x] SBOL3 export, sequencing import (FASTQ / AB1)
+- [x] CSV worklists for biolab machines
 
-- [ ] **Build Pathway Canvas with D3.js**
-  - Interactieve D3.js canvas voor pathway design
-  - Parts uit library naar canvas slepen
-  - Visuele connecties tussen parts
-  - Juiste volgorde afdwingen (promoter → RBS → gene → terminator)
+### External APIs
+- [x] iGEM Registry — search, detail, single + batch import
+- [x] KEGG — pathways, enzymes, genes (with EC → KO → gene fallback)
+- [x] UniProt — protein search, sequences, features, EC lookups
+- [x] PubMed — paper search per part / gene / keyword
 
-## Backend / Database
+### ML / GPU (A6000)
+- [x] **Protenix** (AlphaFold 3 reproduction) — multi-chain protein/DNA/RNA/ligand,
+      8 model variants, per-job model selection, GPU VRAM-aware swapping
+- [x] **ESMFold** as a faster single-chain alternative (`services/esm/`)
+- [x] Unified API contract: `protenix_*` → :8001, `esm*` → :8002
+- [x] Persistent prediction job state across API + worker restarts
 
-- [ ] **Migrate to PostgreSQL**
-  - SQLite vervangen door PostgreSQL
-  - docker-compose.yml updaten
-  - Alembic migrations opzetten
+## Open
 
-- [ ] **Add codon optimization endpoint**
-  - POST /api/v1/optimize endpoint
-  - Input: protein sequence + target organism
-  - Output: codon-optimized DNA sequence
-  - Biopython gebruiken
+### Backend
+- [ ] **Migrate from SQLite to PostgreSQL** — required before multi-user / production.
+      `docker-compose.yml` and the API both currently target SQLite via the
+      `api-data` volume.
 
-## External APIs
+### ML / GPU
+- [ ] **Wire up ESM-3 (not just ESMFold).** ESMFold is structure-only.
+      ESM-3 unlocks variant generation, motif scaffolding, inverse folding,
+      and protein embeddings — the capabilities promised in `CLAUDE.md`.
+      Likely a third GPU service alongside Protenix and ESMFold.
+- [ ] **Resolve dual-GPU contention.** Both Protenix and ESMFold currently
+      claim `NVIDIA_VISIBLE_DEVICES=all`; concurrent use can OOM the A6000.
 
-- [ ] **Integrate PubMed API for research papers**
-  - PubMed/NCBI E-utilities API connectie
-  - Automatisch gerelateerde papers zoeken per part
-  - Zoeken op part name, gene name, keywords
-  - Paper titles, authors, abstract preview, DOI links
+### Platform
+- [ ] **User accounts and project storage** — no auth today; everything is
+      single-tenant. Needed before any external collaborator can use the tool.
+- [ ] **Job history UI** — `GET /api/v1/structure/jobs` exposes the data,
+      no frontend view yet.
 
-- [ ] **Integrate iGEM Registry API**
-  - Direct parts zoeken en importeren vanuit iGEM
-  - external_apis/igem.py client
+### Long-term vision (from `CLAUDE.md`)
+These remain aspirational and require significant new infrastructure:
+- Photosynthetic pathway integration (cyanobacterial / algal light-harvesting)
+- Minimal synthetic-cell chassis design
+- Metabolic flux balance analysis (FBA via `cobra`)
+- Biosafety containment / kill-switch design
 
-- [ ] **Integrate KEGG API for pathways**
-  - Metabolic pathway data ophalen
-  - Enzyme lookups
-  - external_apis/kegg.py client
+## Active issues
 
-- [ ] **Integrate UniProt API for proteins**
-  - Protein sequences en annotaties ophalen
-  - external_apis/uniprot.py client
-
-## ML / GPU (A6000)
-
-- [ ] **Set up ESM-3 service**
-  - ESM-3 protein language model opzetten
-  - ml_service/esm3_service.py
-  - Endpoints voor:
-    - Structure prediction
-    - Variant generation
-    - Protein embeddings
+See [`pathwaysfinder/TODO.md`](pathwaysfinder/TODO.md) for issues currently
+being investigated.
