@@ -85,7 +85,8 @@ Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/l
 
 - [x] LLM service container at `services/llm/` running Gemma via Ollama
       on port 8003 (PR #20). `LLM_MODEL` env var defaults to
-      `gemma3:9b`; override to `gemma4:9b` once available.
+      `gemma4:e4b`; override e.g. to `gemma3:9b` for an older drop-in
+      or `gemma3:4b` on low-VRAM machines.
 - [x] `POST /goal/parse` returning structured `DesignIntent` JSON with
       KEGG/UniProt-grounded IDs (system prompt + post-hoc validation
       against pre-fetched candidate lists)

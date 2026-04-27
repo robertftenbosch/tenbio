@@ -102,8 +102,9 @@ services:
       - "8003:8003"
     environment:
       - OLLAMA_URL=http://ollama:11434
-      # Override to gemma4:9b once available on the Ollama registry.
-      - LLM_MODEL=${LLM_MODEL:-gemma3:9b}
+      # Default model. Override via env, e.g. LLM_MODEL=gemma3:9b for
+      # an older drop-in or LLM_MODEL=gemma3:4b for low-VRAM machines.
+      - LLM_MODEL=${LLM_MODEL:-gemma4:e4b}
       - LLM_PRELOAD=${LLM_PRELOAD:-true}
     depends_on:
       ollama:
