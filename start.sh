@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# Tenbio startup helper.
+#
+# Wraps `docker compose` for the most common things you want to do with
+# the local stack. Run `./start.sh help` for a full list.
+#
+# The full stack runs entirely under docker-compose:
+#
+#   frontend (3000)     React + Vite dev server
+#   api      (8000)     FastAPI, SQLite, all REST endpoints
+#   protenix (8001)     AlphaFold 3 reproduction, GPU
+#   esm      (8002)     ESMFold structure prediction, GPU
+#   llm      (8003)     FastAPI wrapper around Ollama for goal parsing
+#   ollama   (11434)    Ollama server, hosts Gemma weights, GPU
+#
+# The first `up` after a clean checkout will pull docker images and pull
+# the Gemma model (~5 GB) into the ollama-models volume. Subsequent
+# starts are seconds.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_DIR="$SCRIPT_DIR/pathwaysfinder"
+
+# Use the v2 plugin form. Bare `docker-compose` (v1) is also accepted as
+# a fallback for legacy installs.
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    echo "error: neither 'docker compose' nor 'docker-compose' is installed." >&2
+    exit 1
+fi
+
+cd "$COMPOSE_DIR"
+
+# Services that don't require GPU access — useful for laptop development.
+CPU_SERVICES=(api frontend)
+# Services that DO require GPU access.
+GPU_SERVICES=(protenix esm llm ollama)
+ALL_SERVICES=("${CPU_SERVICES[@]}" "${GPU_SERVICES[@]}")
+
+bold()    { printf '\033[1m%s\033[0m\n' "$*"; }
+green()   { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow()  { printf '\033[33m%s\033[0m\n' "$*"; }
+red()     { printf '\033[31m%s\033[0m\n' "$*"; }
+
+usage() {
+    cat <<EOF
+Usage: ./start.sh [command] [args]
+
+Commands:
+  up                Start the full stack (foreground). Ctrl-C to stop.
+  up -d, up --detach
+                    Start the full stack in the background.
+  up-cpu            Start only api + frontend. Skips GPU services for
+                    machines without an NVIDIA GPU. AI Designer + 3D
+                    structure tabs will return errors but everything
+                    else works (Parts, KEGG/UniProt, codon optimizer,
+                    Pathway Designer, exports).
+  down              Stop and remove all containers (volumes preserved).
+  down --volumes    Stop and ALSO drop volumes — wipes parts.db, model
+                    caches, prediction outputs. You will be asked to
+                    confirm.
+  build             Rebuild service images. Use after pulling new code.
+  status            Show health + reachability of each service.
+  logs [service]    Tail logs of a service (default: all).
+  test              Run pytest for the api + llm service.
+  shell <service>   Open a shell inside a running container.
+  help              This message.
+
+Examples:
+  ./start.sh up                # foreground, see all logs
+  ./start.sh up -d             # background, return prompt
+  ./start.sh status            # is everything healthy?
+  ./start.sh logs api          # tail just the api logs
+  ./start.sh down              # stop, keep data
+  ./start.sh down --volumes    # stop and wipe data (prompts confirm)
+
+First-time tips:
+  - The first 'up' triggers an Ollama model pull (~5 GB Gemma).
+    Set LLM_MODEL=gemma3:9b (default) or override to gemma4:9b once
+    that's on the Ollama registry.
+  - Without a GPU, run 'up-cpu' instead. The AI Designer and Structure
+    Predictor tabs will show 503s (expected) but the rest works.
+  - 'docker' must run without sudo. If it doesn't, add yourself to
+    the docker group: sudo usermod -aG docker \$USER (then re-login).
+
+EOF
+}
+
+require_compose_file() {
+    if [[ ! -f docker-compose.yml ]]; then
+        red "error: docker-compose.yml not found in $COMPOSE_DIR" >&2
+        exit 1
+    fi
+}
+
+cmd_up() {
+    require_compose_file
+    local detach=()
+    for arg in "$@"; do
+        case "$arg" in
+            -d|--detach)
+                detach=(-d)
+                ;;
+            *)
+                red "unknown 'up' arg: $arg"
+                exit 1
+                ;;
+        esac
+    done
+    bold "Bringing up Tenbio stack…"
+    "${COMPOSE[@]}" up --build "${detach[@]}"
+    if [[ ${#detach[@]} -gt 0 ]]; then
+        echo
+        cmd_status
+    fi
+}
+
+cmd_up_cpu() {
+    require_compose_file
+    bold "Bringing up CPU-only services (api + frontend)…"
+    "${COMPOSE[@]}" up --build -d "${CPU_SERVICES[@]}"
+    yellow "GPU services (protenix / esm / llm / ollama) are NOT running."
+    yellow "AI Designer + Structure Predictor tabs will return 503."
+    echo
+    cmd_status
+}
+
+cmd_down() {
+    require_compose_file
+    local with_volumes=0
+    for arg in "$@"; do
+        case "$arg" in
+            -v|--volumes)
+                with_volumes=1
+                ;;
+            *)
+                red "unknown 'down' arg: $arg"
+                exit 1
+                ;;
+        esac
+    done
+    if [[ $with_volumes -eq 1 ]]; then
+        red "About to drop ALL volumes. This wipes:"
+        red "  - parts.db (genetic parts library)"
+        red "  - model caches (Protenix, ESM, Ollama Gemma weights)"
+        red "  - prediction outputs (CIF files, persisted job state)"
+        printf "Type 'yes' to confirm: "
+        local confirm
+        read -r confirm
+        if [[ "$confirm" != "yes" ]]; then
+            yellow "Aborted, no changes made."
+            return 0
+        fi
+        "${COMPOSE[@]}" down --volumes
+    else
+        "${COMPOSE[@]}" down
+    fi
+    green "Stack stopped."
+}
+
+cmd_build() {
+    require_compose_file
+    bold "Rebuilding service images…"
+    "${COMPOSE[@]}" build "$@"
+}
+
+cmd_status() {
+    require_compose_file
+    bold "Container state:"
+    "${COMPOSE[@]}" ps
+    echo
+    bold "HTTP health checks:"
+    local services=(
+        "frontend|http://localhost:3000/"
+        "api|http://localhost:8000/health"
+        "protenix|http://localhost:8001/health"
+        "esm|http://localhost:8002/health"
+        "llm|http://localhost:8003/health"
+        "ollama|http://localhost:11434/api/tags"
+    )
+    for entry in "${services[@]}"; do
+        local name="${entry%%|*}"
+        local url="${entry##*|}"
+        local code
+        code=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "$url" 2>/dev/null || echo "000")
+        if [[ "$code" =~ ^2 ]]; then
+            green "  ✓ $name  $url  (HTTP $code)"
+        elif [[ "$code" == "000" ]]; then
+            red   "  ✗ $name  $url  (unreachable)"
+        else
+            yellow "  ? $name  $url  (HTTP $code)"
+        fi
+    done
+}
+
+cmd_logs() {
+    require_compose_file
+    if [[ $# -eq 0 ]]; then
+        "${COMPOSE[@]}" logs --tail=200 -f
+    else
+        "${COMPOSE[@]}" logs --tail=200 -f "$@"
+    fi
+}
+
+cmd_shell() {
+    if [[ $# -ne 1 ]]; then
+        red "usage: ./start.sh shell <service>"
+        exit 1
+    fi
+    require_compose_file
+    "${COMPOSE[@]}" exec "$1" sh -c 'command -v bash >/dev/null && exec bash || exec sh'
+}
+
+cmd_test() {
+    require_compose_file
+    bold "Running api tests…"
+    "${COMPOSE[@]}" exec api pytest -q --ignore=tests/test_kegg_fallback.py
+    bold "Running llm-service tests…"
+    "${COMPOSE[@]}" exec llm pytest -q
+}
+
+main() {
+    local cmd="${1:-up}"
+    [[ $# -gt 0 ]] && shift || true
+    case "$cmd" in
+        up)         cmd_up "$@" ;;
+        up-cpu)     cmd_up_cpu "$@" ;;
+        down)       cmd_down "$@" ;;
+        build)      cmd_build "$@" ;;
+        status|ps)  cmd_status "$@" ;;
+        logs)       cmd_logs "$@" ;;
+        shell|sh)   cmd_shell "$@" ;;
+        test)       cmd_test "$@" ;;
+        help|-h|--help)
+                    usage ;;
+        *)
+                    red "unknown command: $cmd"
+                    echo
+                    usage
+                    exit 1
+                    ;;
+    esac
+}
+
+main "$@"
