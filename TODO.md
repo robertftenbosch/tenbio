@@ -15,18 +15,23 @@ The platform's end goal is for users to express goals like:
 - "Maak bacteriën die bloedplasma-eiwitten produceren voor 0-negatief."
 
 …and have the platform translate those into concrete genetic constructs
-that can be built in the wet lab. Reaching that requires three new
+that can be built in the wet lab. Reaching that requires four new
 capability layers on top of the current parts/pathway/structure stack:
 
 1. **Compound → pathway discovery** (Phase 1, KEGG-grounded reverse
    search)
 2. **Quantitative production simulation** (Phase 2, FBA via `cobra`)
-3. **Natural-language goal interpretation** (LLM service, see plan)
+3. **Multi-domain chassis support** (Phase 3, yeast / fungal / mammalian
+   hosts) — *gating step* for the cheese-proteins and blood-plasma
+   classes of goals, which are biologically impossible in bacteria
+4. **Natural-language goal interpretation** (Phase 4, LLM service, see
+   plan)
 
-Each line below is roughly month-scale work. Honest constraint: many
-"dream" outputs (immunoglobulins, complex glycoproteins) are
-**biologically impossible in bacteria** and require a yeast / mammalian
-chassis layer that the platform does not yet have.
+Each line below is roughly month-scale work. Without Phase 3 the
+platform stays bacterial-only and roughly **two of the five validation
+queries (cheese, blood plasma) cannot be answered with a buildable
+design** — only with a feasibility note saying "use a non-bacterial
+host." Phase 3 unblocks that.
 
 ## Delivered
 
@@ -113,7 +118,59 @@ at a useful rate, and find knockouts / overexpressions that improve it.
 - [ ] Tests using a small toy E. coli core model (`textbook_model`
       from cobra, ~95 reactions) so CI doesn't need to load iML1515.
 
-### Phase 3 — Natural-language LLM service
+### Phase 3 — Multi-domain chassis support
+
+Goal: extend the platform beyond bacteria so therapeutic-protein and
+food-protein goals (cheese, blood plasma, immunoglobulins) become
+buildable, not just "feasibility-noted as impossible." This is the
+gating step for ~40% of the validation queries.
+
+The Phase 1 chassis registry is bacterial-first by design. Phase 3
+broadens it across **three domains**:
+
+- **Yeast / fungal** — *Pichia pastoris*, *Saccharomyces cerevisiae*,
+  *Kluyveromyces lactis*, *Trichoderma reesei*, *Aspergillus niger*.
+  Unlocks: glycosylated therapeutics (HSA, monoclonal Fab),
+  precision-fermentation food proteins (caseins, chymosin, whey).
+- **Photosynthetic** — *Synechocystis* sp. PCC 6803, *Synechococcus
+  elongatus*, *Chlamydomonas reinhardtii*. Unlocks: light-driven
+  production of fuels, alkanes, hydrogen.
+- **Mammalian** — CHO-K1, HEK293. Unlocks: complex glycoproteins,
+  immunoglobulins, factor VIII / IX, EPO. Needed for the
+  "blood plasma" class of goals; significantly out of bacterial /
+  yeast scope (no fermentation, requires bioreactor + serum-free
+  media).
+
+Concrete work:
+
+- [ ] **Chassis model** — promote chassis from a free-text string on
+      `Pathway` to a real entity: domain (bacterial/fungal/photosynthetic/mammalian),
+      capabilities (glycosylation, secretion, photosynthesis, growth
+      medium), codon usage table reference, default genome-scale model
+      reference (links to Phase 2 FBA models).
+- [ ] **Codon tables** — bundle codon-usage tables for the chassis
+      above. Update `services/codon_optimizer.py` to pick the right
+      table per chassis instead of hard-coded E. coli.
+- [ ] **PTM (post-translational modification) capability flags** —
+      glycosylation, phosphorylation, gamma-carboxylation. Used by the
+      LLM service `feasibility_note` and by the Phase 1 design endpoint
+      to filter out impossible chassis/target combinations.
+- [ ] **Genome-scale models for non-bacterial chassis** (extends Phase 2):
+      `iMM904` (S. cerevisiae), `iLB1027_lipid` (P. pastoris),
+      `iSynCJ816` (Synechocystis), `iCHO2291` (CHO-K1).
+- [ ] **Mammalian-cell workflow note** — mammalian construct design is
+      different (lentiviral vectors, stable transfection, no Gibson
+      Assembly). v1 can punt: produce the construct sequence + flag
+      "use a transient transfection workflow, not Gibson." v2 adds a
+      separate cloning-strategy module.
+- [ ] **Chassis-aware Gibson primer designer** — currently primer Tm
+      defaults to 60°C with NEB HiFi. Some yeast workflows use Golden
+      Gate. Add `assembly_method` parameter to the primer endpoint.
+- [ ] **Frontend chassis picker** — when creating a Pathway, pick from
+      a real chassis registry (with capability badges) rather than a
+      free-text input.
+
+### Phase 4 — Natural-language LLM service
 
 Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/llm-service-plan.md).
 
@@ -126,6 +183,9 @@ Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/l
 - [ ] Five validation queries (see plan §9) used as test fixtures.
 - [ ] Frontend "AI Designer" tab that takes natural language and
       pre-fills the Pathway Designer canvas with the candidate design.
+- [ ] When Phase 3 lands, update the parser's `host_candidates`
+      generation so suggestions are filtered against real chassis
+      capability flags (no glycosylated proteins suggested in E. coli).
 
 ### Other open
 
@@ -146,16 +206,11 @@ Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/l
       the tool.
 - [ ] **Job history UI** — `GET /api/v1/structure/jobs` exposes the
       data, no frontend view yet.
-- [ ] **Chassis expansion to non-bacterial hosts** — most blood plasma /
-      glycoprotein use cases are biologically impossible in bacteria.
-      Adding P. pastoris and CHO awareness (codon tables + capability
-      flags + maybe a separate workflow) is the gating step for the
-      "make therapeutic protein" class of goals.
 
 ### Long-term vision (from `CLAUDE.md`)
 
 These remain aspirational and require significant new infrastructure
-beyond Phases 1–3 above:
+beyond Phases 1–4 above:
 
 - Photosynthetic pathway integration with proper light/dark modelling
   (cyanobacterial / algal light-harvesting)
