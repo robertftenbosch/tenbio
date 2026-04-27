@@ -19,19 +19,22 @@ that can be built in the wet lab. Reaching that requires four new
 capability layers on top of the current parts/pathway/structure stack:
 
 1. **Compound → pathway discovery** (Phase 1, KEGG-grounded reverse
-   search)
-2. **Quantitative production simulation** (Phase 2, FBA via `cobra`)
+   search) — **shipped**
+2. **Quantitative production simulation** (Phase 2, FBA via `cobra`) —
+   **partially shipped**: textbook E. coli core + `/simulate/fba` live;
+   strain optimization, larger genome-scale models, and frontend panel
+   still open
 3. **Multi-domain chassis support** (Phase 3, yeast / fungal / mammalian
    hosts) — *gating step* for the cheese-proteins and blood-plasma
-   classes of goals, which are biologically impossible in bacteria
-4. **Natural-language goal interpretation** (Phase 4, LLM service, see
-   plan)
+   classes of goals, which are biologically impossible in bacteria —
+   **open**
+4. **Natural-language goal interpretation** (Phase 4, LLM service via
+   Gemma) — **shipped**
 
-Each line below is roughly month-scale work. Without Phase 3 the
-platform stays bacterial-only and roughly **two of the five validation
-queries (cheese, blood plasma) cannot be answered with a buildable
-design** — only with a feasibility note saying "use a non-bacterial
-host." Phase 3 unblocks that.
+Without Phase 3 the platform stays bacterial-only and roughly **two of
+the five validation queries (cheese, blood plasma) cannot be answered
+with a buildable design** — only with a feasibility note saying "use a
+non-bacterial host." Phase 3 unblocks that.
 
 ## Delivered
 
@@ -61,62 +64,94 @@ host." Phase 3 unblocks that.
 - [x] PubMed — paper search per part / gene / keyword
 
 ### ML / GPU (A6000)
-- [x] **Protenix** (AlphaFold 3 reproduction) — multi-chain protein/DNA/RNA/ligand,
-      8 model variants, per-job model selection, GPU VRAM-aware swapping
+- [x] **Protenix** (AlphaFold 3 reproduction) — multi-chain
+      protein/DNA/RNA/ligand, 8 model variants, per-job model selection,
+      GPU VRAM-aware swapping
 - [x] **ESMFold** as a faster single-chain alternative (`services/esm/`)
 - [x] Unified API contract: `protenix_*` → :8001, `esm*` → :8002
 - [x] Persistent prediction job state across API + worker restarts
 
+### Phase 1 — Compound → pathway discovery (shipped)
+- [x] **`POST /api/v1/design/from-compound`** — KEGG retrosynthetic BFS
+      with hub-metabolite exclusion, EC → KO → gene resolution per host
+      (PR #21)
+- [x] Free-text or KEGG-ID resolution via `/find/compound`
+- [x] Chassis-name → KEGG-organism-code mapping (eco / sce / syn / bsu /
+      ppa / kla) for the design endpoints — note: this is a routing
+      shim, not a full Chassis entity (that comes with Phase 3)
+
+### Phase 4 — Natural-language LLM service (shipped)
+Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/llm-service-plan.md).
+
+- [x] LLM service container at `services/llm/` running Gemma via Ollama
+      on port 8003 (PR #20). `LLM_MODEL` env var defaults to
+      `gemma3:9b`; override to `gemma4:9b` once available.
+- [x] `POST /goal/parse` returning structured `DesignIntent` JSON with
+      KEGG/UniProt-grounded IDs (system prompt + post-hoc validation
+      against pre-fetched candidate lists)
+- [x] `POST /api/v1/design/from-goal` with `materialize=true` chaining
+      to `/from-compound` so a single call goes from natural language
+      to a buildable pathway candidate (PR #21)
+- [x] Five validation queries (ammonia/manure, photosynthetic kerosene,
+      cheese, PFAS, blood plasma) locked in as test fixtures
+- [x] Frontend "AI Designer" tab — goal input, intent card, pathway
+      result with selectable reactions, hand-off to Pathway Designer
+      canvas (PR #22)
+- [x] **Streaming chat** (`POST /api/v1/design/chat/stream` over SSE)
+      with the current DesignIntent injected as system context for
+      grounded follow-ups (PR #23)
+- [ ] When Phase 3 lands, update `host_candidates` generation so
+      suggestions are filtered against real chassis capability flags
+      (no glycosylated proteins suggested in E. coli)
+
+### Phase 2 — FBA via cobrapy (partially shipped)
+- [x] `cobra>=0.29` in API dependencies (PR #25)
+- [x] Chassis-model registry stub (`ChassisModel` dataclass with
+      domain + biomass-objective). Currently lists `textbook` only —
+      Phase 3 adds the rest.
+- [x] **`POST /api/v1/simulate/fba`** — biomass / target-reaction
+      objectives, knockouts, carbon-source override, top-N flux output,
+      404/422/503 error paths
+- [x] `GET /api/v1/simulate/chassis` — registry listing for the
+      upcoming frontend chassis picker
+- [x] Tests use cobra's bundled `textbook` model so CI doesn't need
+      external SBML files
+
 ## Open
 
-### Phase 1 — Compound → pathway discovery
-
-Goal: a user picks a target compound or protein and the platform
-proposes a candidate pathway and chassis.
-
-- [ ] **`POST /api/v1/design/from-compound`** — input: KEGG compound ID
-      (or name) + host. Output: list of candidate pathways as ordered
-      enzyme graphs derived from KEGG reactions.
-- [ ] KEGG reverse-lookup helper: compound → reactions producing it →
-      enzymes (EC) → genes for the chosen organism. Reuses the
-      EC → KO → gene fallback already in place.
-- [ ] Chassis registry — keep this small but real: E. coli BL21 / MG1655,
-      S. cerevisiae, P. pastoris, Synechocystis sp. PCC 6803, B. subtilis.
-      Each with codon-table reference and rough capability tags
-      (photosynthetic, secretion-friendly, glycosylation-capable).
-- [ ] Frontend: "AI Designer" tab that wraps both `/from-compound` and
-      `/from-goal` (see LLM service).
-
-### Phase 2 — FBA via `cobra` / cobrapy
-
-Goal: predict whether a candidate pathway actually produces the target
-at a useful rate, and find knockouts / overexpressions that improve it.
-
-- [ ] Add `cobra>=0.29` to API dependencies. (Note: requires `glpk` or
-      `cplex` as the LP solver — `glpk` is the open-source default.)
-- [ ] **Genome-scale model registry** — bundle reference SBML models for
-      common chassis:
-      - `iML1515` (E. coli K-12, current state-of-the-art)
-      - `iMM904` (S. cerevisiae)
-      - `iLB1027_lipid` or `iCH360` (Pichia pastoris if available)
-      - `iSyn669` or `iSynCJ816` (Synechocystis sp. PCC 6803)
-      - Models live in `pathwaysfinder/api/data/models/*.xml`, mounted
-        as a docker volume so they don't bloat the image.
-- [ ] **`POST /api/v1/simulate/fba`** — input: pathway_id (or ad-hoc
-      reaction set) + chassis + carbon source. Output: predicted growth
-      rate + product flux + flux distribution.
-- [ ] **`POST /api/v1/optimize/strain`** — wraps OptKnock and FSEOF
-      from cobrapy. Input: pathway + production target. Output:
-      ranked list of knockouts / overexpressions with predicted yield
-      improvements.
-- [ ] Frontend: simulation panel showing growth/production tradeoff
-      curve and per-reaction flux table.
-- [ ] Async via Celery? FBA is fast (~seconds); strain design is slow
-      (~minutes). Reuse the existing structure-prediction job pattern
-      for the slow case — `PredictionJob` table can become generic
-      `Job` table.
-- [ ] Tests using a small toy E. coli core model (`textbook_model`
-      from cobra, ~95 reactions) so CI doesn't need to load iML1515.
+### Phase 2 follow-ups (the rest of FBA)
+- [ ] **Drop genome-scale SBML files** into `pathwaysfinder/api/data/models/`
+      and add the corresponding `ChassisModel` registry entries:
+      - `iML1515.xml` (E. coli K-12 MG1655, current state-of-the-art)
+      - `iMM904.xml` (S. cerevisiae)
+      - `iLB1027_lipid.xml` (Pichia pastoris)
+      - `iSynCJ816.xml` (Synechocystis sp. PCC 6803)
+      - `iCHO2291.xml` (CHO-K1, mammalian — Phase 3 adjacent)
+      Mount as a docker volume so the API image stays small.
+- [ ] **`POST /api/v1/optimize/strain`** — wraps cobrapy's OptKnock and
+      FSEOF. Input: pathway + production target + chassis. Output:
+      ranked list of knockout sets / overexpression targets with
+      predicted yield improvements. Slow (~minutes for non-trivial
+      models) → reuse the `PredictionJob` pattern from structure
+      prediction; promote that table from `prediction_jobs` to a
+      generic `jobs` table.
+- [ ] **Frontend simulation panel** — visualises FBA results: growth
+      vs. production tradeoff curve (varying target_reaction lower
+      bound), per-reaction flux table, knockout suggestions from
+      `/optimize/strain`. Sits as a sub-panel on the Pathway Designer
+      tab.
+- [ ] **Integrate FBA into `/api/v1/design/from-goal`** — once a
+      DesignIntent is materialized into a candidate pathway, optionally
+      run FBA on that pathway in the suggested chassis and include the
+      predicted growth + product flux in the response. Closes the
+      "natural language → buildable design *with predicted production
+      rate*" loop in a single call.
+- [ ] **Pathway → reaction-set bridging** — `/simulate/fba` currently
+      takes ad-hoc knockouts; we need a way to overlay a Tenbio
+      `Pathway` (from the Pathway model) onto a chassis genome-scale
+      model. Likely: each `PathwayPart` of type `gene` declares which
+      EC numbers it covers, the FBA endpoint adds those reactions to
+      the chassis if missing.
 
 ### Phase 3 — Multi-domain chassis support
 
@@ -125,7 +160,7 @@ food-protein goals (cheese, blood plasma, immunoglobulins) become
 buildable, not just "feasibility-noted as impossible." This is the
 gating step for ~40% of the validation queries.
 
-The Phase 1 chassis registry is bacterial-first by design. Phase 3
+The current chassis registry is bacterial-first by design. Phase 3
 broadens it across **three domains**:
 
 - **Yeast / fungal** — *Pichia pastoris*, *Saccharomyces cerevisiae*,
@@ -144,48 +179,29 @@ broadens it across **three domains**:
 Concrete work:
 
 - [ ] **Chassis model** — promote chassis from a free-text string on
-      `Pathway` to a real entity: domain (bacterial/fungal/photosynthetic/mammalian),
-      capabilities (glycosylation, secretion, photosynthesis, growth
-      medium), codon usage table reference, default genome-scale model
-      reference (links to Phase 2 FBA models).
+      `Pathway` to a real entity: domain (bacterial / fungal /
+      photosynthetic / mammalian), capabilities (glycosylation,
+      secretion, photosynthesis, growth medium), codon usage table
+      reference, default genome-scale model reference (links to the
+      Phase 2 FBA model registry).
 - [ ] **Codon tables** — bundle codon-usage tables for the chassis
       above. Update `services/codon_optimizer.py` to pick the right
       table per chassis instead of hard-coded E. coli.
 - [ ] **PTM (post-translational modification) capability flags** —
       glycosylation, phosphorylation, gamma-carboxylation. Used by the
-      LLM service `feasibility_note` and by the Phase 1 design endpoint
-      to filter out impossible chassis/target combinations.
-- [ ] **Genome-scale models for non-bacterial chassis** (extends Phase 2):
-      `iMM904` (S. cerevisiae), `iLB1027_lipid` (P. pastoris),
-      `iSynCJ816` (Synechocystis), `iCHO2291` (CHO-K1).
+      LLM service `feasibility_note` and by the design endpoints to
+      filter out impossible chassis/target combinations.
 - [ ] **Mammalian-cell workflow note** — mammalian construct design is
       different (lentiviral vectors, stable transfection, no Gibson
       Assembly). v1 can punt: produce the construct sequence + flag
       "use a transient transfection workflow, not Gibson." v2 adds a
       separate cloning-strategy module.
 - [ ] **Chassis-aware Gibson primer designer** — currently primer Tm
-      defaults to 60°C with NEB HiFi. Some yeast workflows use Golden
+      defaults to 60 °C with NEB HiFi. Some yeast workflows use Golden
       Gate. Add `assembly_method` parameter to the primer endpoint.
 - [ ] **Frontend chassis picker** — when creating a Pathway, pick from
-      a real chassis registry (with capability badges) rather than a
+      the real chassis registry (with capability badges) rather than a
       free-text input.
-
-### Phase 4 — Natural-language LLM service
-
-Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/llm-service-plan.md).
-
-- [ ] LLM service container at `services/llm/` running latest Gemma
-      (Gemma 4 9B target, fallback Gemma 3 9B) via Ollama. Port 8003.
-- [ ] `POST /goal/parse` (LLM-side) → `DesignIntent` JSON with
-      KEGG/UniProt-grounded IDs.
-- [ ] `POST /api/v1/design/from-goal` (main API) — parses the goal then
-      hands off to `/from-compound`.
-- [ ] Five validation queries (see plan §9) used as test fixtures.
-- [ ] Frontend "AI Designer" tab that takes natural language and
-      pre-fills the Pathway Designer canvas with the candidate design.
-- [ ] When Phase 3 lands, update the parser's `host_candidates`
-      generation so suggestions are filtered against real chassis
-      capability flags (no glycosylated proteins suggested in E. coli).
 
 ### Other open
 
@@ -197,15 +213,21 @@ Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/l
       folding, and protein embeddings — the capabilities promised in
       `CLAUDE.md`. Likely a fourth GPU service alongside Protenix,
       ESMFold and the LLM.
-- [ ] **GPU contention** — Protenix, ESMFold, and the planned LLM
-      service all share one A6000. With three loaded models VRAM is
-      tight. Add a cross-service lock at the API layer so only one heavy
-      inference runs at a time.
+- [ ] **GPU contention** — Protenix, ESMFold, and the LLM service all
+      share one A6000. With three loaded models VRAM is tight. Add a
+      cross-service lock at the API layer so only one heavy inference
+      runs at a time.
 - [ ] **User accounts and project storage** — no auth today; everything
       is single-tenant. Needed before any external collaborator can use
       the tool.
 - [ ] **Job history UI** — `GET /api/v1/structure/jobs` exposes the
       data, no frontend view yet.
+- [ ] **Inline "explain this part" buttons** — leverage the streaming
+      chat endpoint from PartCard / PathwayCanvas for in-context
+      explanations. Plan §10 v2 follow-up.
+- [ ] **Browser-side LLM fallback (WebLLM)** — for privacy-sensitive
+      pathway designs that shouldn't leave the browser. Plan §13 open
+      question.
 
 ### Long-term vision (from `CLAUDE.md`)
 
