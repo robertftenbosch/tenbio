@@ -21,15 +21,17 @@ capability layers on top of the current parts/pathway/structure stack:
 1. **Compound → pathway discovery** (Phase 1, KEGG-grounded reverse
    search) — **shipped**
 2. **Quantitative production simulation** (Phase 2, FBA via `cobra`) —
-   **partially shipped**: textbook E. coli core + `/simulate/fba` live;
-   strain optimization, larger genome-scale models, and frontend panel
-   still open
+   **mostly shipped**: chassis registry, `/simulate/fba`, frontend
+   simulation panel, and FBA chained into `/from-goal` are live;
+   non-bacterial SBML models, OptKnock/FSEOF strain optimization, and
+   pathway → reaction-set bridging are the remaining follow-ups
 3. **Multi-domain chassis support** (Phase 3, yeast / fungal / mammalian
    hosts) — *gating step* for the cheese-proteins and blood-plasma
    classes of goals, which are biologically impossible in bacteria —
    **open**
 4. **Natural-language goal interpretation** (Phase 4, LLM service via
-   Gemma) — **shipped**
+   Gemma) — **shipped**, including streaming chat and multi-phase
+   progress feedback in the AI Designer
 
 Without Phase 3 the platform stays bacterial-only and roughly **two of
 the five validation queries (cheese, blood plasma) cannot be answered
@@ -101,29 +103,44 @@ Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/l
 - [x] **Streaming chat** (`POST /api/v1/design/chat/stream` over SSE)
       with the current DesignIntent injected as system context for
       grounded follow-ups (PR #23)
+- [x] **Multi-phase progress feedback** in the AI Designer — phase
+      labels, elapsed counter, cancel button via AbortController,
+      auto-scroll to result on completion (PR #34)
 - [ ] When Phase 3 lands, update `host_candidates` generation so
       suggestions are filtered against real chassis capability flags
       (no glycosylated proteins suggested in E. coli)
 
-### Phase 2 — FBA via cobrapy (partially shipped)
+### Phase 2 — FBA via cobrapy (mostly shipped)
 - [x] `cobra>=0.29` in API dependencies (PR #25)
 - [x] Chassis-model registry stub (`ChassisModel` dataclass with
       domain + biomass-objective). Currently lists `textbook` only —
       Phase 3 adds the rest.
 - [x] **`POST /api/v1/simulate/fba`** — biomass / target-reaction
       objectives, knockouts, carbon-source override, top-N flux output,
-      404/422/503 error paths
+      404/422/503 error paths (PR #25)
 - [x] `GET /api/v1/simulate/chassis` — registry listing for the
-      upcoming frontend chassis picker
+      frontend chassis picker (PR #25)
 - [x] Tests use cobra's bundled `textbook` model so CI doesn't need
-      external SBML files
+      external SBML files (PR #25)
+- [x] **FBA chained into `POST /api/v1/design/from-goal`** — when the
+      LLM materializes a pathway in a registered chassis, predicted
+      growth + (when target compound maps to an exchange) target flux
+      come back in the same response. KEGG_TO_BIGG_EXCHANGE curated
+      map covers the most common compounds; biomass-FBA fallback for
+      everything else (PR #33)
+- [x] **Frontend simulation panel** in the Pathway Designer tab —
+      chassis dropdown, biomass / target objective, knockouts, carbon
+      source override, top-N flux table with bounds. Cancel button.
+      Datalist of common BiGG exchange ids so users don't have to
+      memorise them (PR #35)
 
 ## Open
 
 ### Phase 2 follow-ups (the rest of FBA)
 - [ ] **Drop genome-scale SBML files** into `pathwaysfinder/api/data/models/`
       and add the corresponding `ChassisModel` registry entries:
-      - `iML1515.xml` (E. coli K-12 MG1655, current state-of-the-art)
+      - `iML1515.xml` (E. coli K-12 MG1655, current state-of-the-art —
+        replaces `textbook` for serious work; ~1500 reactions vs ~95)
       - `iMM904.xml` (S. cerevisiae)
       - `iLB1027_lipid.xml` (Pichia pastoris)
       - `iSynCJ816.xml` (Synechocystis sp. PCC 6803)
@@ -136,23 +153,24 @@ Detailed plan: [`pathwaysfinder/docs/llm-service-plan.md`](pathwaysfinder/docs/l
       models) → reuse the `PredictionJob` pattern from structure
       prediction; promote that table from `prediction_jobs` to a
       generic `jobs` table.
-- [ ] **Frontend simulation panel** — visualises FBA results: growth
-      vs. production tradeoff curve (varying target_reaction lower
-      bound), per-reaction flux table, knockout suggestions from
-      `/optimize/strain`. Sits as a sub-panel on the Pathway Designer
-      tab.
-- [ ] **Integrate FBA into `/api/v1/design/from-goal`** — once a
-      DesignIntent is materialized into a candidate pathway, optionally
-      run FBA on that pathway in the suggested chassis and include the
-      predicted growth + product flux in the response. Closes the
-      "natural language → buildable design *with predicted production
-      rate*" loop in a single call.
 - [ ] **Pathway → reaction-set bridging** — `/simulate/fba` currently
-      takes ad-hoc knockouts; we need a way to overlay a Tenbio
-      `Pathway` (from the Pathway model) onto a chassis genome-scale
-      model. Likely: each `PathwayPart` of type `gene` declares which
-      EC numbers it covers, the FBA endpoint adds those reactions to
-      the chassis if missing.
+      runs on the unmodified chassis; the `SimulationPanel` already
+      exposes a `pathwayReactionIds` prop for one-click knockout
+      chips, but the chassis doesn't know about the user's actual
+      pathway parts yet. Plan: each `PathwayPart` of type `gene`
+      declares which EC numbers it covers, the FBA endpoint adds
+      those reactions to the chassis on the fly if missing, and the
+      result becomes the production rate of the user's *specific
+      design* rather than the chassis's intrinsic capacity.
+- [ ] **Growth/production tradeoff curve** in the simulation panel —
+      sweep target-reaction lower bound, plot biomass-vs-target. Gives
+      the user the Pareto front of "how much can I push production
+      before growth collapses?"
+- [ ] **`KEGG_TO_BIGG_EXCHANGE` expansion** — current curated map in
+      `services/fba.py` covers ~15 common compounds. Once iML1515 +
+      yeast/fungal models land, expand the map (or wire up an
+      MetaNetX / BiGG cross-reference lookup) so target_flux works
+      for more validation queries out of the box.
 
 ### Phase 3 — Multi-domain chassis support
 
