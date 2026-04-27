@@ -68,6 +68,66 @@ CHASSIS_REGISTRY: dict[str, ChassisModel] = {
 }
 
 
+# KEGG compound ID -> BiGG exchange reaction id. Used to translate a
+# DesignIntent.target.kegg_id into the right `EX_*_e` exchange so we can
+# tell the user "predicted production rate of <target>" instead of just
+# generic biomass growth. Tiny by design; extend as needed.
+KEGG_TO_BIGG_EXCHANGE: dict[str, str] = {
+    "C00014": "EX_nh4_e",     # Ammonia / NH4+
+    "C00469": "EX_etoh_e",    # Ethanol
+    "C00033": "EX_ac_e",      # Acetate
+    "C00042": "EX_succ_e",    # Succinate
+    "C00186": "EX_lac__L_e",  # L-Lactate (textbook uses __D variant -> see find_target_exchange fallback)
+    "C00256": "EX_lac__D_e",  # D-Lactate
+    "C00031": "EX_glc__D_e",  # D-Glucose
+    "C00022": "EX_pyr_e",     # Pyruvate
+    "C00149": "EX_mal__L_e",  # L-Malate
+    "C00041": "EX_ala__L_e",  # L-Alanine
+    "C00037": "EX_gly_e",     # Glycine
+    "C00064": "EX_gln__L_e",  # L-Glutamine
+    "C00025": "EX_glu__L_e",  # L-Glutamate
+    "C00407": "EX_ile__L_e",  # L-Isoleucine
+    "C00183": "EX_val__L_e",  # L-Valine
+}
+
+
+def _strip_cpd_prefix(kegg_id: str) -> str:
+    return kegg_id[4:] if kegg_id.startswith("cpd:") else kegg_id
+
+
+def find_target_exchange(model: cobra.Model, kegg_id: str | None, name: str | None) -> str | None:
+    """Resolve a DesignIntent target compound to a chassis-model exchange.
+
+    Strategy (in order):
+      1. Exact lookup of KEGG ID in the curated KEGG_TO_BIGG_EXCHANGE map,
+         and confirm the reaction exists in the model.
+      2. If the curated mapping is missing (or for a different chassis),
+         scan the model's exchanges for one whose id matches `EX_<bigg>_e`
+         where <bigg> is the simplified target name.
+
+    Returns None when no match is found; callers should fall back to a
+    biomass FBA in that case.
+    """
+    if kegg_id:
+        bare = _strip_cpd_prefix(kegg_id)
+        candidate = KEGG_TO_BIGG_EXCHANGE.get(bare)
+        if candidate and candidate in model.reactions:
+            return candidate
+
+    if name:
+        # Build a couple of normalized candidates from the name.
+        norm = name.lower().split("(")[0].strip()
+        # Try a few common stems.
+        keywords = [norm, norm.replace(" ", ""), norm.split()[0] if norm else ""]
+        for kw in {k for k in keywords if k}:
+            for rxn in model.exchanges:
+                rid = rxn.id.lower()
+                if rid.startswith("ex_") and kw in rid:
+                    return rxn.id
+
+    return None
+
+
 def list_chassis() -> list[dict]:
     """API-friendly summary of available chassis models."""
     out = []

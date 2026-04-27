@@ -216,6 +216,8 @@ def test_from_goal_materialization_failure_keeps_intent(client, ammonia_llm_resp
     ), patch(
         "app.routes.design.pathway_search.search_pathway",
         AsyncMock(side_effect=RuntimeError("KEGG timeout")),
+    ), patch(
+        "app.routes.design._run_intent_fba", return_value=None
     ):
         r = client.post(
             "/api/v1/design/from-goal",
@@ -224,6 +226,203 @@ def test_from_goal_materialization_failure_keeps_intent(client, ammonia_llm_resp
     assert r.status_code == 200
     assert r.json()["pathway_candidates"] is None
     assert r.json()["intent"]["target"]["kegg_id"] == "cpd:C00014"
+
+
+# ---------------------------------------------------------------------------
+# /from-goal — FBA chaining
+# ---------------------------------------------------------------------------
+
+
+def test_from_goal_attaches_fba_for_known_chassis(
+    client, ammonia_llm_response, fake_search_result
+):
+    """E. coli intent + ammonia (cpd:C00014) → fba field with EX_nh4_e flux.
+
+    Uses the real cobra textbook model (bundled, ~95 reactions), so this
+    is end-to-end except for KEGG/LLM mocks.
+    """
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([{"id": "cpd:C00014", "name": "Ammonia"}], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=ammonia_llm_response),
+    ), patch(
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(return_value=fake_search_result),
+    ):
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Maak een organisme dat ammoniak afbreekt naar N2"},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["fba"] is not None, "FBA should chain for E. coli + ammonia"
+    fba = body["fba"]
+    assert fba["chassis"] == "textbook"
+    assert fba["target_reaction"] == "EX_nh4_e"
+    assert fba["status"] == "optimal"
+    # Whatever the optimum, both numbers should be real floats.
+    assert isinstance(fba["objective_value"], (int, float))
+    assert isinstance(fba["target_flux"], (int, float))
+
+
+def test_from_goal_falls_back_to_biomass_when_target_unknown(client):
+    """LLM target with no exchange match → biomass FBA, target_flux is null."""
+    no_exchange_match = {
+        "intent": {
+            "raw_query": "Make some weird esoteric thing",
+            "target": {
+                "kind": "compound",
+                "name": "definitely-not-an-exchange-substrate",
+                "kegg_id": "cpd:C99999",
+                "uniprot_id": None,
+                "smiles": None,
+            },
+            "host_candidates": ["E. coli"],
+            "optimization_metric": "rate",
+            "constraints": [],
+            "feasibility_note": "n/a",
+            "confidence": "low",
+        },
+        "model_used": "gemma4:e4b",
+    }
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=no_exchange_match),
+    ), patch(
+        # Pathway search will succeed-but-empty in this scenario.
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(
+            return_value={
+                "target": {"id": "cpd:C99999", "name": "x"},
+                "host": "eco",
+                "max_depth_used": 2,
+                "reactions": [],
+                "notes": [],
+            }
+        ),
+    ):
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Make some weird esoteric thing"},
+        )
+
+    assert r.status_code == 200
+    body = r.json()
+    fba = body["fba"]
+    assert fba is not None, "biomass-FBA fallback should still attach"
+    assert fba["target_reaction"] is None
+    assert fba["target_flux"] is None
+    # The textbook biomass on default media is in the [0.85, 0.90] range.
+    assert 0.85 <= fba["growth_rate"] <= 0.90
+
+
+def test_from_goal_fba_skipped_for_unsupported_chassis(client):
+    """Pichia pastoris isn't in the FBA registry yet → fba is None."""
+    pichia_intent = {
+        "intent": {
+            "raw_query": "make casein in pichia",
+            "target": {
+                "kind": "protein",
+                "name": "alpha-S1-casein",
+                "kegg_id": None,
+                "uniprot_id": "P02662",
+                "smiles": None,
+            },
+            "host_candidates": ["Pichia pastoris"],
+            "optimization_metric": "titer",
+            "constraints": [],
+            "feasibility_note": "ok",
+            "confidence": "high",
+        },
+        "model_used": "gemma4:e4b",
+    }
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=pichia_intent),
+    ):
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "make casein in pichia"},
+        )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fba"] is None, "no FBA when chassis isn't in the registry"
+
+
+def test_from_goal_fba_skipped_when_materialize_false(
+    client, ammonia_llm_response
+):
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=ammonia_llm_response),
+    ):
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Maak een organisme dat ammoniak afbreekt", "materialize": False},
+        )
+    assert r.status_code == 200
+    assert r.json()["fba"] is None
+
+
+def test_from_goal_fba_solver_failure_keeps_intent(client, ammonia_llm_response):
+    """If cobra explodes on us, the intent + pathway must still come back."""
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=ammonia_llm_response),
+    ), patch(
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(
+            return_value={
+                "target": {"id": "cpd:C00014", "name": "Ammonia"},
+                "host": "eco",
+                "max_depth_used": 2,
+                "reactions": [],
+                "notes": [],
+            }
+        ),
+    ), patch(
+        "app.routes.design.fba.run_fba", side_effect=RuntimeError("LP solver crash")
+    ):
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Maak een organisme dat ammoniak afbreekt"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fba"] is None  # silently dropped
+    assert body["intent"]["target"]["kegg_id"] == "cpd:C00014"
+
+
+def test_find_target_exchange_curated_lookup():
+    from app.services.fba import find_target_exchange, get_model
+
+    model = get_model("textbook")
+    assert find_target_exchange(model, "cpd:C00014", "Ammonia") == "EX_nh4_e"
+    assert find_target_exchange(model, "C00469", "Ethanol") == "EX_etoh_e"
+    assert find_target_exchange(model, "C00033", "Acetate") == "EX_ac_e"
+
+
+def test_find_target_exchange_returns_none_for_unknown():
+    from app.services.fba import find_target_exchange, get_model
+
+    model = get_model("textbook")
+    assert find_target_exchange(model, "cpd:C99999", "obscurium") is None
 
 
 # ---------------------------------------------------------------------------

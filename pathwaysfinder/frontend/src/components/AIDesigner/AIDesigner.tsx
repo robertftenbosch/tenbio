@@ -3,6 +3,7 @@ import { designFromGoal } from '../../api/design'
 import { DesignFromGoalResponse } from '../../types/design'
 import { Part } from '../../types/parts'
 import { ChatPanel } from './ChatPanel'
+import { FBACard } from './FBACard'
 import { IntentCard } from './IntentCard'
 import { PathwayResult } from './PathwayResult'
 
@@ -217,6 +218,7 @@ export function AIDesigner({ onUseDesign }: Props) {
             candidateKeggCount={result.candidate_kegg_count}
             candidateUniprotCount={result.candidate_uniprot_count}
           />
+          {result.fba && <FBACard fba={result.fba} />}
           {result.pathway_candidates ? (
             <PathwayResult
               result={result.pathway_candidates}

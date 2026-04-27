@@ -64,6 +64,34 @@ class DesignFromGoalRequest(BaseModel):
     )
 
 
+class FBASummary(BaseModel):
+    """Slim FBA result attached to a DesignFromGoalResponse.
+
+    A compact subset of the full FBAResponse — only what the AI Designer
+    UI needs to show "predicted production rate" alongside the parsed
+    intent. The full flux distribution is available via the dedicated
+    POST /api/v1/simulate/fba endpoint when the user wants to dig in.
+    """
+
+    chassis: str
+    objective_id: str = Field(
+        ..., description="Reaction the LP maximised (biomass id, or the resolved target exchange)."
+    )
+    objective_value: float
+    growth_rate: float
+    target_reaction: Optional[str] = Field(
+        None,
+        description=(
+            "Chassis-model exchange reaction matched to the intent's "
+            "target compound (e.g. EX_nh4_e for ammonia). Null when no "
+            "match is known — biomass FBA was used instead."
+        ),
+    )
+    target_flux: Optional[float] = None
+    status: str
+    notes: list[str] = Field(default_factory=list)
+
+
 class DesignFromGoalResponse(BaseModel):
     intent: DesignIntent
     candidate_kegg_count: int = Field(
@@ -77,6 +105,16 @@ class DesignFromGoalResponse(BaseModel):
             "If the parsed intent has a kegg_id and the request asked "
             "for it, the deterministic /from-compound search is run "
             "automatically and its result is included here."
+        ),
+    )
+    fba: Optional[FBASummary] = Field(
+        None,
+        description=(
+            "FBA summary on the resolved chassis. Populated when "
+            "materialize=true and the chassis is in the FBA registry. "
+            "When the intent's target compound resolves to a chassis "
+            "exchange reaction, that's the maximisation target; "
+            "otherwise biomass is used and target_flux is null."
         ),
     )
 
