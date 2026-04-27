@@ -43,6 +43,25 @@ class DesignFromGoalRequest(BaseModel):
             "get nulled out. Default false."
         ),
     )
+    materialize: bool = Field(
+        True,
+        description=(
+            "If true and the parsed intent has a kegg_id, also run the "
+            "deterministic /from-compound search and return the candidate "
+            "reactions. End-to-end natural-language → pathway in one call."
+        ),
+    )
+    host: str = Field(
+        "eco",
+        description=(
+            "KEGG organism code for materialization. Used only when "
+            "materialize=true and the intent's first host_candidate "
+            "doesn't map to a known KEGG organism code."
+        ),
+    )
+    max_depth: int = Field(
+        2, ge=0, le=4, description="BFS depth for materialization."
+    )
 
 
 class DesignFromGoalResponse(BaseModel):
@@ -52,3 +71,98 @@ class DesignFromGoalResponse(BaseModel):
     )
     candidate_uniprot_count: int
     model_used: Optional[str] = None
+    pathway_candidates: Optional["PathwayCandidatesResponse"] = Field(
+        None,
+        description=(
+            "If the parsed intent has a kegg_id and the request asked "
+            "for it, the deterministic /from-compound search is run "
+            "automatically and its result is included here."
+        ),
+    )
+
+
+# --- Compound -> pathway -----------------------------------------------------
+
+
+class CompoundRef(BaseModel):
+    id: str = Field(..., description="KEGG compound ID, e.g. cpd:C00014")
+    name: Optional[str] = None
+
+
+class GeneRef(BaseModel):
+    id: str = Field(..., description="KEGG gene ID, e.g. eco:b0421")
+    name: Optional[str] = None
+    definition: Optional[str] = None
+    organism: Optional[str] = None
+    ec_number: Optional[str] = None
+
+
+class ReactionStep(BaseModel):
+    reaction_id: str = Field(..., description="KEGG reaction ID, e.g. rn:R02749")
+    reaction_name: Optional[str] = None
+    equation: Optional[str] = None
+    ec_numbers: list[str] = Field(default_factory=list)
+    substrates: list[str] = Field(
+        default_factory=list,
+        description="KEGG compound IDs feeding this step (retrosynthetic upstream).",
+    )
+    products: list[str] = Field(
+        default_factory=list,
+        description="KEGG compound IDs produced by this step.",
+    )
+    candidate_genes: list[GeneRef] = Field(
+        default_factory=list,
+        description=(
+            "Genes in the host organism that encode the enzyme(s) for "
+            "this reaction. Empty if the host doesn't have an annotated "
+            "homolog."
+        ),
+    )
+    depth: int = Field(
+        ...,
+        description=(
+            "BFS depth from the target. depth=0 means this reaction "
+            "directly produces the target; depth=1 produces a substrate "
+            "of a depth=0 reaction; etc."
+        ),
+    )
+
+
+class DesignFromCompoundRequest(BaseModel):
+    compound: str = Field(
+        ...,
+        description=(
+            "Target compound, either a KEGG ID (cpd:C00014 or just "
+            "C00014) or a free-text name to be resolved via "
+            "KEGG /find/compound."
+        ),
+        min_length=2,
+    )
+    host: str = Field(
+        "eco",
+        description=(
+            "KEGG organism code for gene lookup. Defaults to E. coli (eco)."
+        ),
+    )
+    max_depth: int = Field(
+        2,
+        ge=0,
+        le=4,
+        description=(
+            "BFS depth bound. depth=0 returns only direct producers; "
+            "depth>=2 reaches grand-precursors. Capped at 4 to keep "
+            "KEGG API load polite."
+        ),
+    )
+
+
+class PathwayCandidatesResponse(BaseModel):
+    target: CompoundRef
+    host: str
+    max_depth_used: int
+    reactions: list[ReactionStep]
+    notes: list[str] = Field(default_factory=list)
+
+
+# Required for the forward reference in DesignFromGoalResponse.
+DesignFromGoalResponse.model_rebuild()

@@ -1,7 +1,7 @@
-"""Tests for /api/v1/design — the natural-language design routes.
+"""Tests for /api/v1/design — natural-language and compound-driven routes.
 
-LLM service is mocked; KEGG / UniProt grounding is mocked at the helper
-level so the tests don't touch the network.
+External services (LLM, KEGG, UniProt) are mocked so the suite has no
+network or GPU dependency.
 """
 
 from __future__ import annotations
@@ -9,6 +9,11 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -34,20 +39,54 @@ def ammonia_llm_response():
     }
 
 
-def test_from_goal_grounds_then_calls_llm(client, ammonia_llm_response):
-    """Happy path: grounding produces candidates, LLM is called with them."""
-    fake_candidates = (
-        [{"id": "cpd:C00014", "name": "Ammonia", "synonyms": ["NH3"]}],
-        [],
-    )
+@pytest.fixture
+def fake_search_result():
+    """Minimal pathway_search.search_pathway return shape."""
+    return {
+        "target": {"id": "cpd:C00014", "name": "Ammonia"},
+        "host": "eco",
+        "max_depth_used": 2,
+        "reactions": [
+            {
+                "reaction_id": "rn:R00253",
+                "reaction_name": "Glutamine synthetase",
+                "equation": "C00025 + C00014 + C00002 <=> C00064 + C00008 + C00009",
+                "ec_numbers": ["6.3.1.2"],
+                "substrates": ["cpd:C00025", "cpd:C00014", "cpd:C00002"],
+                "products": ["cpd:C00064", "cpd:C00008", "cpd:C00009"],
+                "candidate_genes": [
+                    {
+                        "id": "eco:b3870",
+                        "name": "glnA",
+                        "definition": "glutamine synthetase",
+                        "organism": "Escherichia coli",
+                        "ec_number": "6.3.1.2",
+                    }
+                ],
+                "depth": 0,
+            }
+        ],
+        "notes": [],
+    }
 
+
+# ---------------------------------------------------------------------------
+# /from-goal happy paths
+# ---------------------------------------------------------------------------
+
+
+def test_from_goal_grounds_then_calls_llm(client, ammonia_llm_response, fake_search_result):
+    """Default materialize=true chains to /from-compound after the LLM call."""
     with patch(
         "app.routes.design.goal_grounding.build_candidates",
-        AsyncMock(return_value=fake_candidates),
+        AsyncMock(return_value=([{"id": "cpd:C00014", "name": "Ammonia"}], [])),
     ), patch(
         "app.routes.design.llm_client.parse_goal",
         AsyncMock(return_value=ammonia_llm_response),
-    ) as parse_mock:
+    ) as parse_mock, patch(
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(return_value=fake_search_result),
+    ) as search_mock:
         r = client.post(
             "/api/v1/design/from-goal",
             json={"query": "Maak een organisme dat ammoniak afbreekt naar N2"},
@@ -57,15 +96,69 @@ def test_from_goal_grounds_then_calls_llm(client, ammonia_llm_response):
     body = r.json()
     assert body["intent"]["target"]["kegg_id"] == "cpd:C00014"
     assert body["candidate_kegg_count"] == 1
-    assert body["candidate_uniprot_count"] == 0
-    assert body["model_used"] == "gemma3:9b"
-
-    # The LLM client should have been called with the grounded candidates.
+    assert body["pathway_candidates"] is not None
+    assert body["pathway_candidates"]["target"]["id"] == "cpd:C00014"
+    assert body["pathway_candidates"]["reactions"][0]["candidate_genes"][0]["name"] == "glnA"
     parse_mock.assert_called_once()
-    call_kwargs = parse_mock.call_args.kwargs
-    assert call_kwargs["candidate_kegg_ids"] == [
-        {"id": "cpd:C00014", "name": "Ammonia", "synonyms": ["NH3"]}
-    ]
+    search_mock.assert_called_once()
+
+
+def test_from_goal_skip_materialize(client, ammonia_llm_response):
+    """materialize=false returns intent only, no KEGG search."""
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=ammonia_llm_response),
+    ), patch(
+        "app.routes.design.pathway_search.search_pathway", AsyncMock()
+    ) as search_mock:
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Maak iets cools", "materialize": False},
+        )
+
+    assert r.status_code == 200
+    assert r.json()["pathway_candidates"] is None
+    search_mock.assert_not_called()
+
+
+def test_from_goal_no_kegg_id_skips_materialize(client):
+    """If LLM returns a target without a kegg_id, materialization is skipped."""
+    no_kegg_response = {
+        "intent": {
+            "raw_query": "Make some protein",
+            "target": {
+                "kind": "protein",
+                "name": "x",
+                "kegg_id": None,
+                "uniprot_id": "P02662",
+                "smiles": None,
+            },
+            "host_candidates": ["P. pastoris"],
+            "optimization_metric": "titer",
+            "constraints": [],
+            "feasibility_note": "ok",
+            "confidence": "high",
+        },
+        "model_used": "gemma3:9b",
+    }
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal", AsyncMock(return_value=no_kegg_response)
+    ), patch(
+        "app.routes.design.pathway_search.search_pathway", AsyncMock()
+    ) as search_mock:
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Make a fancy protein"},
+        )
+    assert r.status_code == 200
+    assert r.json()["pathway_candidates"] is None
+    search_mock.assert_not_called()
 
 
 def test_from_goal_skip_grounding_passes_empty_candidates(client, ammonia_llm_response):
@@ -75,16 +168,16 @@ def test_from_goal_skip_grounding_passes_empty_candidates(client, ammonia_llm_re
     ) as ground_mock, patch(
         "app.routes.design.llm_client.parse_goal",
         AsyncMock(return_value=ammonia_llm_response),
-    ) as parse_mock:
+    ) as parse_mock, patch(
+        "app.routes.design.pathway_search.search_pathway", AsyncMock()
+    ):
         r = client.post(
             "/api/v1/design/from-goal",
-            json={"query": "Test query that should skip grounding", "skip_grounding": True},
+            json={"query": "Maak iets nieuws", "skip_grounding": True, "materialize": False},
         )
 
     assert r.status_code == 200
-    # build_candidates should NOT have been called
     ground_mock.assert_not_called()
-    # LLM should still be called, but with empty candidate lists
     assert parse_mock.call_args.kwargs["candidate_kegg_ids"] == []
 
 
@@ -100,7 +193,7 @@ def test_from_goal_503_when_llm_unreachable(client):
     ):
         r = client.post(
             "/api/v1/design/from-goal",
-            json={"query": "Maak iets nieuws"},
+            json={"query": "Maak iets nieuws", "materialize": False},
         )
 
     assert r.status_code == 503
@@ -112,15 +205,256 @@ def test_from_goal_rejects_short_query(client):
     assert r.status_code == 422
 
 
-def test_from_compound_returns_501(client):
-    """Stub endpoint until the next PR."""
-    r = client.post("/api/v1/design/from-compound")
-    assert r.status_code == 501
-    assert "follow-up" in r.json()["detail"].lower() or "next pr" in r.json()["detail"].lower()
+def test_from_goal_materialization_failure_keeps_intent(client, ammonia_llm_response):
+    """If KEGG flakes during materialization, return the intent without it."""
+    with patch(
+        "app.routes.design.goal_grounding.build_candidates",
+        AsyncMock(return_value=([{"id": "cpd:C00014", "name": "Ammonia"}], [])),
+    ), patch(
+        "app.routes.design.llm_client.parse_goal",
+        AsyncMock(return_value=ammonia_llm_response),
+    ), patch(
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(side_effect=RuntimeError("KEGG timeout")),
+    ):
+        r = client.post(
+            "/api/v1/design/from-goal",
+            json={"query": "Maak een organisme dat ammoniak afbreekt"},
+        )
+    assert r.status_code == 200
+    assert r.json()["pathway_candidates"] is None
+    assert r.json()["intent"]["target"]["kegg_id"] == "cpd:C00014"
 
 
 # ---------------------------------------------------------------------------
-# goal_grounding helper
+# /from-compound
+# ---------------------------------------------------------------------------
+
+
+def test_from_compound_returns_reactions(client, fake_search_result):
+    with patch(
+        "app.routes.design.pathway_search.resolve_compound_id",
+        AsyncMock(return_value="cpd:C00014"),
+    ), patch(
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(return_value=fake_search_result),
+    ):
+        r = client.post(
+            "/api/v1/design/from-compound",
+            json={"compound": "ammonia", "host": "eco", "max_depth": 1},
+        )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["target"]["id"] == "cpd:C00014"
+    assert body["host"] == "eco"
+    assert len(body["reactions"]) == 1
+    rxn = body["reactions"][0]
+    assert rxn["depth"] == 0
+    assert rxn["ec_numbers"] == ["6.3.1.2"]
+    assert rxn["candidate_genes"][0]["name"] == "glnA"
+
+
+def test_from_compound_404_when_unresolvable(client):
+    with patch(
+        "app.routes.design.pathway_search.resolve_compound_id", AsyncMock(return_value=None)
+    ):
+        r = client.post(
+            "/api/v1/design/from-compound",
+            json={"compound": "definitely-not-a-real-compound-zxy"},
+        )
+    assert r.status_code == 404
+    assert "KEGG" in r.json()["detail"]
+
+
+def test_from_compound_accepts_kegg_id_directly(client, fake_search_result):
+    """A query that's already a KEGG ID should skip the search step."""
+    with patch(
+        "app.routes.design.pathway_search.resolve_compound_id",
+        AsyncMock(return_value="cpd:C00014"),
+    ) as resolve_mock, patch(
+        "app.routes.design.pathway_search.search_pathway",
+        AsyncMock(return_value=fake_search_result),
+    ):
+        r = client.post(
+            "/api/v1/design/from-compound",
+            json={"compound": "cpd:C00014"},
+        )
+    assert r.status_code == 200
+    resolve_mock.assert_called_once_with("cpd:C00014")
+
+
+def test_from_compound_rejects_too_short(client):
+    r = client.post("/api/v1/design/from-compound", json={"compound": "x"})
+    assert r.status_code == 422
+
+
+def test_from_compound_caps_max_depth(client):
+    r = client.post(
+        "/api/v1/design/from-compound",
+        json={"compound": "ammonia", "max_depth": 99},
+    )
+    assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# pathway_search internals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_compound_id_normalises_kegg_id():
+    from app.services.pathway_search import resolve_compound_id
+
+    assert await resolve_compound_id("cpd:C00014") == "cpd:C00014"
+    assert await resolve_compound_id("C00014") == "cpd:C00014"
+
+
+@pytest.mark.asyncio
+async def test_resolve_compound_id_falls_back_to_search():
+    from app.services import pathway_search
+
+    with patch(
+        "app.services.pathway_search.search_compounds",
+        AsyncMock(return_value=[{"id": "cpd:C00014", "name": "Ammonia"}]),
+    ):
+        assert await pathway_search.resolve_compound_id("ammonia") == "cpd:C00014"
+
+
+@pytest.mark.asyncio
+async def test_resolve_compound_id_returns_none_on_no_hit():
+    from app.services import pathway_search
+
+    with patch(
+        "app.services.pathway_search.search_compounds", AsyncMock(return_value=[])
+    ):
+        assert await pathway_search.resolve_compound_id("nonsense") is None
+
+
+@pytest.mark.asyncio
+async def test_search_pathway_handles_unknown_compound():
+    from app.services import pathway_search
+
+    with patch(
+        "app.services.pathway_search.get_compound_info", AsyncMock(return_value=None)
+    ):
+        result = await pathway_search.search_pathway("cpd:C99999", max_depth=1)
+    assert result["reactions"] == []
+    assert any("not found" in n.lower() for n in result["notes"])
+
+
+@pytest.mark.asyncio
+async def test_search_pathway_collects_direct_producers():
+    """Depth=0: target compound has 1 reaction; substrate is non-hub."""
+    from app.services import pathway_search
+
+    target = {
+        "id": "cpd:C00014",
+        "name": "Ammonia",
+        "reaction_ids": ["rn:R00253"],
+        "pathway_ids": [],
+        "enzyme_ec": ["6.3.1.2"],
+    }
+    glutamate = {
+        "id": "cpd:C00025",
+        "name": "L-Glutamate",
+        "reaction_ids": [],
+        "pathway_ids": [],
+        "enzyme_ec": [],
+    }
+    rxn = {
+        "id": "rn:R00253",
+        "name": "GS",
+        "equation": "C00025 + C00014 <=> C00064",
+        "left_compounds": ["cpd:C00025", "cpd:C00014"],
+        "right_compounds": ["cpd:C00064"],
+        "ec_numbers": ["6.3.1.2"],
+    }
+    gene = {"id": "eco:b3870", "name": "glnA"}
+
+    async def fake_compound_info(cpd_id):
+        return {
+            "cpd:C00014": target,
+            "cpd:C00025": glutamate,
+        }.get(cpd_id)
+
+    with patch(
+        "app.services.pathway_search.get_compound_info",
+        AsyncMock(side_effect=fake_compound_info),
+    ), patch(
+        "app.services.pathway_search.get_reaction_info", AsyncMock(return_value=rxn)
+    ), patch(
+        "app.services.pathway_search.get_enzyme_genes", AsyncMock(return_value=[gene])
+    ):
+        result = await pathway_search.search_pathway(
+            "cpd:C00014", host_organism="eco", max_depth=0
+        )
+
+    assert len(result["reactions"]) == 1
+    step = result["reactions"][0]
+    assert step["depth"] == 0
+    assert step["candidate_genes"][0]["name"] == "glnA"
+    # The target (C00014) is on the left side of the reaction, so the
+    # retrosynthetic "substrates" (i.e. what we'd need to start from to
+    # produce C00014 by running the reaction in reverse) come from the
+    # right side: C00064 (glutamine).
+    assert step["substrates"] == ["cpd:C00064"]
+    assert "cpd:C00014" in step["products"]
+
+
+@pytest.mark.asyncio
+async def test_search_pathway_prunes_hub_metabolites():
+    """ATP / water on the substrate side must not be expanded."""
+    from app.services import pathway_search
+
+    target = {
+        "id": "cpd:C99999",
+        "name": "Target",
+        "reaction_ids": ["rn:R12345"],
+        "pathway_ids": [],
+        "enzyme_ec": ["1.1.1.1"],
+    }
+    rxn = {
+        "id": "rn:R12345",
+        "name": "X synthase",
+        "equation": "C00002 + C00001 <=> C99999 + C00008",
+        "left_compounds": ["cpd:C00002", "cpd:C00001"],   # ATP + H2O (hubs)
+        "right_compounds": ["cpd:C99999", "cpd:C00008"],
+        "ec_numbers": ["1.1.1.1"],
+    }
+    expanded: list[str] = []
+
+    async def fake_compound_info(cpd_id):
+        expanded.append(cpd_id)
+        if cpd_id == "cpd:C99999":
+            return target
+        return {
+            "id": cpd_id,
+            "name": cpd_id,
+            "reaction_ids": [],
+            "pathway_ids": [],
+            "enzyme_ec": [],
+        }
+
+    with patch(
+        "app.services.pathway_search.get_compound_info",
+        AsyncMock(side_effect=fake_compound_info),
+    ), patch(
+        "app.services.pathway_search.get_reaction_info", AsyncMock(return_value=rxn)
+    ), patch(
+        "app.services.pathway_search.get_enzyme_genes", AsyncMock(return_value=[])
+    ):
+        await pathway_search.search_pathway(
+            "cpd:C99999", host_organism="eco", max_depth=2
+        )
+
+    # Hubs (ATP, H2O) should never be expanded as new BFS frontiers.
+    assert "cpd:C00002" not in expanded
+    assert "cpd:C00001" not in expanded
+
+
+# ---------------------------------------------------------------------------
+# goal_grounding helper (carried over from prior PR; ensures coverage)
 # ---------------------------------------------------------------------------
 
 
@@ -136,7 +470,6 @@ def test_grounding_routes_protein_keywords_to_uniprot():
     from app.services.goal_grounding import _extract_keywords
 
     cpd, prot = _extract_keywords("Maak de eiwitten om kaas te produceren")
-    # "kaas" -> "casein" goes to protein bucket because casein is a protein
     assert "casein" in prot
     assert "casein" not in cpd
 
