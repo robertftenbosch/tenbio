@@ -273,6 +273,48 @@ cmd_build() {
     "${COMPOSE[@]}" build "$@"
 }
 
+# Inspect a compose service's container state. Returns one of:
+#   missing    -- no container at all
+#   starting   -- container Up but healthcheck pending (health: starting)
+#   unhealthy  -- healthcheck has failed enough times to flip
+#   restarting -- container is in the restart loop
+#   running    -- Up, no/healthy healthcheck
+container_state() {
+    local service="$1"
+    local cid
+    cid=$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null)
+    if [[ -z "$cid" ]]; then
+        echo "missing"
+        return
+    fi
+    # docker inspect is more reliable than parsing `ps` output.
+    local state health
+    state=$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo "")
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid" 2>/dev/null || echo "")
+    case "$state" in
+        restarting|paused) echo "$state"; return ;;
+        running)
+            case "$health" in
+                starting) echo "starting" ;;
+                unhealthy) echo "unhealthy" ;;
+                *)        echo "running" ;;  # healthy or no healthcheck
+            esac
+            ;;
+        *) echo "${state:-missing}" ;;
+    esac
+}
+
+# Tail the last N lines from a service container's logs. Used to give
+# users a glimpse of what a "starting" service is doing (typically:
+# pulling a Gemma model, compiling CUDA kernels, downloading weights).
+tail_recent_logs() {
+    local service="$1" lines="${2:-2}"
+    "${COMPOSE[@]}" logs --tail "$lines" "$service" 2>/dev/null \
+        | grep -v "^$" \
+        | sed 's/^/      /' \
+        | tail -n "$lines"
+}
+
 cmd_status() {
     require_compose_file
     bold "Container state:"
@@ -298,11 +340,56 @@ cmd_status() {
         code="${code:-000}"
         if [[ "$code" =~ ^2 ]]; then
             green "  ✓ $name  $url  (HTTP $code)"
-        elif [[ "$code" == "000" ]]; then
-            red   "  ✗ $name  $url  (unreachable)"
-        else
-            yellow "  ? $name  $url  (HTTP $code)"
+            continue
         fi
+
+        # HTTP didn't come back. Look at the container state for a
+        # richer message instead of just "unreachable".
+        local state
+        state=$(container_state "$name")
+        case "$state" in
+            missing)
+                red "  ✗ $name  $url  (no container — run './start.sh up')"
+                ;;
+            starting)
+                yellow "  … $name  $url  (container starting; healthcheck pending)"
+                if [[ "$name" == "llm" ]]; then
+                    yellow "      Likely pulling the Gemma model (~5 GB on first run)."
+                    yellow "      Tail with: ./start.sh logs llm    or    ./start.sh logs ollama"
+                fi
+                local snippet
+                snippet=$(tail_recent_logs "$name" 2)
+                if [[ -n "$snippet" ]]; then
+                    printf '%s\n' "$snippet"
+                fi
+                ;;
+            unhealthy)
+                red "  ✗ $name  $url  (container unhealthy — check './start.sh logs $name')"
+                ;;
+            restarting)
+                red "  ↻ $name  $url  (container restarting — check './start.sh logs $name')"
+                ;;
+            paused)
+                yellow "  ⏸ $name  $url  (container paused)"
+                ;;
+            running)
+                # Container says it's fine, but HTTP didn't come through.
+                # Could be CORS / firewall / wrong port mapping / app crash
+                # without a healthcheck. Always actionable.
+                if [[ "$code" == "000" ]]; then
+                    yellow "  ? $name  $url  (container up, port unreachable — app crashed inside?)"
+                else
+                    yellow "  ? $name  $url  (HTTP $code)"
+                fi
+                ;;
+            *)
+                if [[ "$code" == "000" ]]; then
+                    red "  ✗ $name  $url  (unreachable; container state: $state)"
+                else
+                    yellow "  ? $name  $url  (HTTP $code; container state: $state)"
+                fi
+                ;;
+        esac
     done
 }
 
