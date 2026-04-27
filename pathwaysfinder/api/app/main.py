@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
 from app.models import parts as _parts_model  # noqa: F401  (register with Base.metadata)
 from app.models import pathway as _pathway_model  # noqa: F401  (register with Base.metadata)
+from app.models import prediction_job as _prediction_job_model  # noqa: F401  (register with Base.metadata)
 from app.routes import parts, optimize, igem, kegg, uniprot, structure, export, sequencing, pathway, primers
 
 # Create database tables

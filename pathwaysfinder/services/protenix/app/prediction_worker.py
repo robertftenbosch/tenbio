@@ -11,6 +11,7 @@ from queue import Queue
 from typing import Optional
 
 from app.schemas import ChainInput, ConfidenceScores, JobStatus, PredictionRequest
+from app import job_persistence
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,20 @@ _runner_lock = threading.Lock()
 _preloading: bool = False
 
 BASE_OUTPUT_DIR = os.environ.get("PROTENIX_OUTPUT_DIR", "/app/output")
+
+
+def _persist(job_id: str) -> None:
+    """Snapshot the current in-memory state for a job to disk."""
+    status = _jobs.get(job_id)
+    if status is None:
+        return
+    job_persistence.persist_job(
+        BASE_OUTPUT_DIR,
+        job_id,
+        status,
+        _job_requests.get(job_id),
+        _job_output_dirs.get(job_id),
+    )
 
 # Catalog of all available Protenix model variants with metadata.
 # Keys match model names from configs/configs_model_type.py.
@@ -270,6 +285,7 @@ def submit_job(request: PredictionRequest) -> str:
         created_at=now,
     )
     _job_requests[job_id] = request
+    _persist(job_id)
     _job_queue.put(job_id)
 
     logger.info(f"Job {job_id} submitted: {request.name}")
@@ -344,6 +360,7 @@ def _worker_loop():
             created_at=_jobs[job_id].created_at,
             started_at=now,
         )
+        _persist(job_id)
 
         try:
             # Build Protenix input JSON
@@ -352,6 +369,8 @@ def _worker_loop():
             # Create output directory for this job
             job_output_dir = os.path.join(BASE_OUTPUT_DIR, job_id)
             os.makedirs(job_output_dir, exist_ok=True)
+            _job_output_dirs[job_id] = job_output_dir
+            _persist(job_id)
 
             # Write input JSON to temp file
             input_json_path = os.path.join(job_output_dir, "input.json")
@@ -359,6 +378,7 @@ def _worker_loop():
                 json.dump(protenix_input, f, indent=2)
 
             _jobs[job_id].progress = "Loading model and running inference"
+            _persist(job_id)
 
             # Get the runner for the requested model (swaps if needed)
             runner = get_runner(request.model_name)
@@ -389,6 +409,7 @@ def _worker_loop():
                 confidence=confidence,
                 structure_available=cif_path is not None,
             )
+            _persist(job_id)
             logger.info(f"Job {job_id} completed successfully.")
 
         except Exception as e:
@@ -403,10 +424,25 @@ def _worker_loop():
                 completed_at=now,
                 error=str(e),
             )
+            _persist(job_id)
 
         finally:
             _job_queue.task_done()
 
+
+# Restore any persisted jobs before starting the worker thread.
+# `running` jobs from a previous process are marked failed; `queued` jobs are
+# re-enqueued so they actually run; completed/failed jobs are restored so the
+# API can still poll their final status.
+_restore_counts = job_persistence.restore_jobs(
+    BASE_OUTPUT_DIR, _jobs, _job_requests, _job_output_dirs, _job_queue
+)
+if _restore_counts["restored"]:
+    logger.info(
+        f"Restored {_restore_counts['restored']} job(s) from disk "
+        f"(re-queued {_restore_counts['requeued']}, "
+        f"marked {_restore_counts['failed_running']} failed from interrupted runs)."
+    )
 
 # Start the background worker thread
 _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
