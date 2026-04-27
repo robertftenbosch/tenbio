@@ -11,6 +11,7 @@ from queue import Queue
 from typing import Optional
 
 from app.schemas import ConfidenceScores, JobStatus, PredictionRequest
+from app import job_persistence
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,20 @@ _model_lock = threading.Lock()
 _preloading: bool = False
 
 BASE_OUTPUT_DIR = os.environ.get("ESM_OUTPUT_DIR", "/app/output")
+
+
+def _persist(job_id: str) -> None:
+    """Snapshot the current in-memory state for a job to disk."""
+    status = _jobs.get(job_id)
+    if status is None:
+        return
+    job_persistence.persist_job(
+        BASE_OUTPUT_DIR,
+        job_id,
+        status,
+        _job_requests.get(job_id),
+        _job_output_dirs.get(job_id),
+    )
 
 # Catalog of available ESM model variants.
 MODEL_CATALOG: dict[str, dict] = {
@@ -200,6 +215,7 @@ def submit_job(request: PredictionRequest) -> str:
         created_at=now,
     )
     _job_requests[job_id] = request
+    _persist(job_id)
     _job_queue.put(job_id)
 
     logger.info(f"Job {job_id} submitted: {request.name}")
@@ -235,6 +251,7 @@ def _worker_loop():
             created_at=_jobs[job_id].created_at,
             started_at=now,
         )
+        _persist(job_id)
 
         try:
             # Validate: ESMFold only supports single protein chains
@@ -257,12 +274,13 @@ def _worker_loop():
             # Create output directory
             job_output_dir = os.path.join(BASE_OUTPUT_DIR, job_id)
             os.makedirs(job_output_dir, exist_ok=True)
+            _job_output_dirs[job_id] = job_output_dir
+            _persist(job_id)
 
             _jobs[job_id].progress = "Loading model and running inference"
+            _persist(job_id)
 
             cif_path, confidence = _run_esmfold(sequence, job_output_dir)
-
-            _job_output_dirs[job_id] = job_output_dir
 
             now = datetime.now(timezone.utc)
             _jobs[job_id] = JobStatus(
@@ -275,6 +293,7 @@ def _worker_loop():
                 confidence=confidence,
                 structure_available=cif_path is not None,
             )
+            _persist(job_id)
             logger.info(f"Job {job_id} completed successfully.")
 
         except Exception as e:
@@ -289,10 +308,22 @@ def _worker_loop():
                 completed_at=now,
                 error=str(e),
             )
+            _persist(job_id)
 
         finally:
             _job_queue.task_done()
 
+
+# Restore any persisted jobs before starting the worker thread.
+_restore_counts = job_persistence.restore_jobs(
+    BASE_OUTPUT_DIR, _jobs, _job_requests, _job_output_dirs, _job_queue
+)
+if _restore_counts["restored"]:
+    logger.info(
+        f"Restored {_restore_counts['restored']} job(s) from disk "
+        f"(re-queued {_restore_counts['requeued']}, "
+        f"marked {_restore_counts['failed_running']} failed from interrupted runs)."
+    )
 
 # Start the background worker thread
 _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
