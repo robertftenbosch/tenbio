@@ -369,14 +369,33 @@ def _worker_loop():
             runner.configs["seeds"] = list(range(101, 101 + request.num_seeds))
             runner.configs["sample_diffusion"]["N_sample"] = request.num_samples
 
+            # Update the runner's internal dump_dir and dumper base_dir so
+            # Protenix outputs into the job-specific directory (not the default).
+            runner.dump_dir = job_output_dir
+            runner.error_dir = os.path.join(job_output_dir, "ERR")
+            os.makedirs(runner.error_dir, exist_ok=True)
+            if hasattr(runner, "dumper") and runner.dumper is not None:
+                runner.dumper.base_dir = job_output_dir
+
             from runner.inference import infer_predict
 
             infer_predict(runner, runner.configs)
 
-            # Parse results
+            # Parse results -- search job output dir first, then fallback to
+            # BASE_OUTPUT_DIR/{name}/ in case Protenix wrote there instead.
             _job_output_dirs[job_id] = job_output_dir
             confidence = _parse_confidence(job_output_dir)
             cif_path = _find_output_cif(job_output_dir)
+
+            if cif_path is None:
+                fallback_dir = os.path.join(BASE_OUTPUT_DIR, request.name)
+                if os.path.isdir(fallback_dir):
+                    logger.warning(
+                        f"Job {job_id}: output not in job dir, found in {fallback_dir}"
+                    )
+                    cif_path = _find_output_cif(fallback_dir)
+                    confidence = confidence or _parse_confidence(fallback_dir)
+                    _job_output_dirs[job_id] = fallback_dir
 
             now = datetime.now(timezone.utc)
             _jobs[job_id] = JobStatus(

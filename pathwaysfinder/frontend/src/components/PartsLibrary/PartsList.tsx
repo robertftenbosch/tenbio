@@ -45,7 +45,7 @@ export function PartsList({ filters, onPredictStructure }: PartsListProps) {
       <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
         <p className="font-medium">Error loading parts</p>
         <p className="text-sm mt-1">{error}</p>
-        <p className="text-sm mt-2">Make sure the backend is running at http://localhost:8001</p>
+        <p className="text-sm mt-2">Make sure the backend is running at http://localhost:8000</p>
       </div>
     )
   }
