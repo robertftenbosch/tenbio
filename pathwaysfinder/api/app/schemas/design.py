@@ -128,6 +128,26 @@ class ReactionStep(BaseModel):
     )
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(..., min_length=1)
+
+
+class ChatStreamRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1)
+    intent: Optional["DesignIntent"] = Field(
+        None,
+        description=(
+            "Optional DesignIntent the user is currently looking at. If "
+            "set, it's prepended as a system message so follow-up "
+            "questions stay grounded in the parsed goal + chassis "
+            "feasibility note."
+        ),
+    )
+    temperature: float = Field(0.3, ge=0.0, le=2.0)
+    max_tokens: int = Field(1024, ge=1, le=8192)
+
+
 class DesignFromCompoundRequest(BaseModel):
     compound: str = Field(
         ...,
@@ -164,5 +184,7 @@ class PathwayCandidatesResponse(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-# Required for the forward reference in DesignFromGoalResponse.
+# Required for the forward reference in DesignFromGoalResponse and
+# ChatStreamRequest (both reference types defined further down).
 DesignFromGoalResponse.model_rebuild()
+ChatStreamRequest.model_rebuild()

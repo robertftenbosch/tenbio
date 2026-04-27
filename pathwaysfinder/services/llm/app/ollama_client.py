@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
 import httpx
 
@@ -95,6 +95,49 @@ class OllamaClient:
             r = await c.post(f"{self.base_url}/api/chat", json=payload)
             r.raise_for_status()
             return r.json()
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        *,
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+    ) -> AsyncIterator[str]:
+        """Streaming variant of /api/chat.
+
+        Ollama returns NDJSON lines when stream=true. We yield the
+        `message.content` token from each line as a plain string. The
+        terminating line carries `done: true` and an empty content; we
+        stop before yielding it.
+        """
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        async with httpx.AsyncClient(timeout=self.request_timeout) as c:
+            async with c.stream(
+                "POST", f"{self.base_url}/api/chat", json=payload
+            ) as r:
+                r.raise_for_status()
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning(f"ollama stream: skipping non-JSON line: {line[:80]}")
+                        continue
+                    if evt.get("done"):
+                        break
+                    msg = evt.get("message") or {}
+                    content = msg.get("content")
+                    if isinstance(content, str) and content:
+                        yield content
 
     @staticmethod
     def extract_content(response: dict) -> Optional[str]:

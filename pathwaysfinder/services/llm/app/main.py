@@ -18,6 +18,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.ollama_client import OllamaClient
 from app.schemas import (
@@ -173,7 +174,7 @@ async def parse_goal(req: GoalParseRequest):
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    """General chat endpoint. Currently non-streaming; streaming is a v2 task."""
+    """Non-streaming chat. Use /chat/stream for token-by-token output."""
     messages = [m.model_dump() for m in req.messages]
     try:
         ollama_response = await _client.chat(
@@ -187,3 +188,39 @@ async def chat(req: ChatRequest):
 
     content = OllamaClient.extract_content(ollama_response) or ""
     return ChatResponse(content=content, model_used=LLM_MODEL)
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Server-sent-events stream of chat tokens.
+
+    Each event is a `data: <json>\\n\\n` line where the JSON has either
+    `{"token": "..."}` for a delta or `{"done": true}` for end-of-stream.
+    Errors mid-stream become `{"error": "..."}` followed by `{"done": true}`.
+
+    Frontend consumes via fetch + ReadableStream (EventSource doesn't
+    support POST bodies cleanly).
+    """
+    messages = [m.model_dump() for m in req.messages]
+
+    async def event_source():
+        try:
+            async for token in _client.chat_stream(
+                messages,
+                temperature=req.temperature,
+                max_tokens=req.max_tokens,
+            ):
+                yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception as e:
+            logger.exception("chat stream error")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'model': LLM_MODEL})}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering if proxied
+        },
+    )

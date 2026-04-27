@@ -1,4 +1,6 @@
 import {
+  ChatStreamEvent,
+  ChatStreamRequest,
   DesignFromCompoundRequest,
   DesignFromGoalRequest,
   DesignFromGoalResponse,
@@ -36,4 +38,70 @@ export function designFromCompound(
   req: DesignFromCompoundRequest
 ): Promise<PathwayCandidatesResponse> {
   return postJson('/from-compound', req)
+}
+
+/**
+ * POST /api/v1/design/chat/stream and yield parsed SSE events.
+ *
+ * The endpoint emits `data: <json>\n\n` lines where the JSON is one of
+ * { token } | { error } | { done }. We accumulate bytes across reads
+ * because a token can land on a chunk boundary; only complete events
+ * (terminated by \n\n) are yielded.
+ *
+ * Pass an AbortSignal to allow the caller to stop the stream cleanly
+ * (e.g. unmount or "stop" button).
+ */
+export async function* streamChat(
+  req: ChatStreamRequest,
+  signal?: AbortSignal
+): AsyncGenerator<ChatStreamEvent, void, void> {
+  const response = await fetch(`${API_BASE}/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(req),
+    signal,
+  })
+  if (!response.ok || !response.body) {
+    let detail = `Chat stream failed (${response.status})`
+    try {
+      const data = await response.json()
+      detail = data.detail || detail
+    } catch {
+      // ignore
+    }
+    throw new Error(detail)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // SSE event delimiter is a blank line (\n\n).
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const raw = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        for (const line of raw.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            yield JSON.parse(line.slice('data: '.length)) as ChatStreamEvent
+          } catch {
+            // skip malformed line
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }

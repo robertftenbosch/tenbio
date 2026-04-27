@@ -7,7 +7,7 @@ the pattern of `external_apis/kegg.py` (httpx async, narrow surface).
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -57,3 +57,36 @@ async def health() -> dict[str, Any]:
             return r.json() if r.status_code == 200 else {"status": "degraded"}
     except Exception:
         return {"status": "unreachable"}
+
+
+async def stream_chat(
+    messages: list[dict],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int = 1024,
+    timeout: float = 300.0,
+) -> AsyncIterator[bytes]:
+    """Yield raw SSE chunks from the LLM service /chat/stream endpoint.
+
+    The chunks are bytes ready to forward verbatim to the browser; the
+    client decides whether to parse them or just pipe to an EventSource.
+    """
+    payload = {
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            async with c.stream(
+                "POST", f"{LLM_SERVICE_URL}/chat/stream", json=payload
+            ) as r:
+                if r.status_code != 200:
+                    body = await r.aread()
+                    raise LLMServiceError(
+                        f"LLM stream error ({r.status_code}): {body.decode(errors='replace')[:300]}"
+                    )
+                async for chunk in r.aiter_raw():
+                    yield chunk
+    except httpx.ConnectError as e:
+        raise LLMServiceError(f"LLM service unreachable: {e}") from e
