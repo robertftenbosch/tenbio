@@ -291,7 +291,11 @@ cmd_status() {
         local name="${entry%%|*}"
         local url="${entry##*|}"
         local code
-        code=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "$url" 2>/dev/null || echo "000")
+        # curl writes %{http_code} to stdout AND exits non-zero on
+        # connect failure; without `|| true` the `|| echo "000"` chain
+        # doubled the output to e.g. "000000". Default empty -> "000".
+        code=$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' "$url" 2>/dev/null || true)
+        code="${code:-000}"
         if [[ "$code" =~ ^2 ]]; then
             green "  ✓ $name  $url  (HTTP $code)"
         elif [[ "$code" == "000" ]]; then
