@@ -41,10 +41,94 @@ CPU_SERVICES=(api frontend)
 GPU_SERVICES=(protenix esm llm ollama)
 ALL_SERVICES=("${CPU_SERVICES[@]}" "${GPU_SERVICES[@]}")
 
+# Host ports each service publishes. Kept in sync with docker-compose.yml.
+# The preflight check needs these even before docker-compose is invoked.
+CPU_PORTS=(3000 8000)
+GPU_PORTS=(8001 8002 8003 11434)
+ALL_PORTS=("${CPU_PORTS[@]}" "${GPU_PORTS[@]}")
+
 bold()    { printf '\033[1m%s\033[0m\n' "$*"; }
 green()   { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow()  { printf '\033[33m%s\033[0m\n' "$*"; }
 red()     { printf '\033[31m%s\033[0m\n' "$*"; }
+
+
+# --- Port preflight ----------------------------------------------------
+
+# Check if a TCP port on localhost is currently listening. Uses bash's
+# /dev/tcp builtin so it works without ss/lsof/netstat.
+port_in_use() {
+    local port="$1"
+    (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null
+}
+
+# Best-effort description of what's holding a port. Tries ss, then lsof.
+# Returns "unknown" if neither is available, e.g. minimal containers.
+describe_port_holder() {
+    local port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        # Format: pid + program from users:(("name",pid=NNN,fd=...))
+        local out
+        out=$(ss -tlnp "sport = :$port" 2>/dev/null | tail -n +2 | head -n 1)
+        if [[ -n "$out" ]]; then
+            local extracted
+            extracted=$(echo "$out" | sed -n 's/.*users:((\("[^"]*"\),pid=\([0-9]*\).*/\1 pid=\2/p')
+            if [[ -n "$extracted" ]]; then
+                echo "$extracted"
+                return
+            fi
+        fi
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        local row
+        row=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $1, "pid=" $2}')
+        if [[ -n "$row" ]]; then
+            echo "$row"
+            return
+        fi
+    fi
+    echo "unknown"
+}
+
+# Detect if the conflicting container is one of ours, so the user gets a
+# tailored message ("./start.sh down" rather than "kill the process").
+tenbio_already_running() {
+    "${COMPOSE[@]}" ps --quiet 2>/dev/null | grep -q . && return 0
+    return 1
+}
+
+# Check the listed ports; if any are taken, print a helpful message and
+# return non-zero. Pass `--force` upstream to skip this entirely.
+preflight_ports() {
+    local ports=("$@")
+    local conflicts=()
+    for port in "${ports[@]}"; do
+        if port_in_use "$port"; then
+            conflicts+=("$port")
+        fi
+    done
+    if [[ ${#conflicts[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    red "Port conflict — one or more required ports are already in use:"
+    for port in "${conflicts[@]}"; do
+        local holder
+        holder=$(describe_port_holder "$port")
+        printf '  \033[31m✗\033[0m port %-5s  (held by: %s)\n' "$port" "$holder" >&2
+    done
+    echo
+
+    if tenbio_already_running; then
+        yellow "It looks like the Tenbio stack is already running."
+        yellow "Run './start.sh status' to inspect, './start.sh down' to stop"
+        yellow "before bringing it back up, or pass --force to recreate."
+    else
+        yellow "Stop the conflicting process(es), or pass --force to start"
+        yellow "anyway (docker-compose will then fail with its own error)."
+    fi
+    return 1
+}
 
 usage() {
     cat <<EOF
@@ -52,13 +136,17 @@ Usage: ./start.sh [command] [args]
 
 Commands:
   up                Start the full stack (foreground). Ctrl-C to stop.
+                    Aborts with a port-conflict message if any of the
+                    required ports (3000, 8000, 8001, 8002, 8003, 11434)
+                    is already in use; pass -f / --force to skip that
+                    check.
   up -d, up --detach
                     Start the full stack in the background.
-  up-cpu            Start only api + frontend. Skips GPU services for
-                    machines without an NVIDIA GPU. AI Designer + 3D
-                    structure tabs will return errors but everything
-                    else works (Parts, KEGG/UniProt, codon optimizer,
-                    Pathway Designer, exports).
+  up-cpu            Start only api + frontend (ports 3000, 8000). Skips
+                    GPU services for machines without an NVIDIA GPU.
+                    AI Designer + 3D structure tabs will return errors
+                    but everything else works (Parts, KEGG/UniProt,
+                    codon optimizer, Pathway Designer, exports).
   down              Stop and remove all containers (volumes preserved).
   down --volumes    Stop and ALSO drop volumes — wipes parts.db, model
                     caches, prediction outputs. You will be asked to
@@ -100,10 +188,14 @@ require_compose_file() {
 cmd_up() {
     require_compose_file
     local detach=()
+    local force=0
     for arg in "$@"; do
         case "$arg" in
             -d|--detach)
                 detach=(-d)
+                ;;
+            -f|--force)
+                force=1
                 ;;
             *)
                 red "unknown 'up' arg: $arg"
@@ -111,6 +203,9 @@ cmd_up() {
                 ;;
         esac
     done
+    if [[ $force -eq 0 ]]; then
+        preflight_ports "${ALL_PORTS[@]}" || exit 1
+    fi
     bold "Bringing up Tenbio stack…"
     "${COMPOSE[@]}" up --build "${detach[@]}"
     if [[ ${#detach[@]} -gt 0 ]]; then
@@ -121,6 +216,16 @@ cmd_up() {
 
 cmd_up_cpu() {
     require_compose_file
+    local force=0
+    for arg in "$@"; do
+        case "$arg" in
+            -f|--force) force=1 ;;
+            *) red "unknown 'up-cpu' arg: $arg"; exit 1 ;;
+        esac
+    done
+    if [[ $force -eq 0 ]]; then
+        preflight_ports "${CPU_PORTS[@]}" || exit 1
+    fi
     bold "Bringing up CPU-only services (api + frontend)…"
     "${COMPOSE[@]}" up --build -d "${CPU_SERVICES[@]}"
     yellow "GPU services (protenix / esm / llm / ollama) are NOT running."
