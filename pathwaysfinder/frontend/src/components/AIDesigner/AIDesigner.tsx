@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { designFromGoal } from '../../api/design'
 import { DesignFromGoalResponse } from '../../types/design'
 import { Part } from '../../types/parts'
@@ -6,6 +6,7 @@ import { ChatPanel } from './ChatPanel'
 import { FBACard } from './FBACard'
 import { IntentCard } from './IntentCard'
 import { PathwayResult } from './PathwayResult'
+import { ProgressIndicator } from './ProgressIndicator'
 
 interface Props {
   /**
@@ -40,6 +41,20 @@ export function AIDesigner({ onUseDesign }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<DesignFromGoalResponse | null>(null)
 
+  const abortRef = useRef<AbortController | null>(null)
+  const resultAnchorRef = useRef<HTMLDivElement | null>(null)
+
+  // Scroll the freshly-arrived result into view so users with a long
+  // input form aren't left wondering "did anything happen?"
+  useEffect(() => {
+    if (result) {
+      resultAnchorRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }
+  }, [result])
+
   const submit = async (overrideQuery?: string) => {
     const text = (overrideQuery ?? query).trim()
     if (text.length < 3) {
@@ -49,19 +64,35 @@ export function AIDesigner({ onUseDesign }: Props) {
     setLoading(true)
     setError(null)
     setResult(null)
+
+    const controller = new AbortController()
+    abortRef.current = controller
+
     try {
-      const response = await designFromGoal({
-        query: text,
-        host,
-        max_depth: maxDepth,
-        materialize,
-      })
+      const response = await designFromGoal(
+        {
+          query: text,
+          host,
+          max_depth: maxDepth,
+          materialize,
+        },
+        controller.signal
+      )
       setResult(response)
     } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        // User cancelled; just clear the loading state silently.
+        return
+      }
       setError(e instanceof Error ? e.message : 'Onbekende fout.')
     } finally {
       setLoading(false)
+      abortRef.current = null
     }
+  }
+
+  const cancel = () => {
+    abortRef.current?.abort()
   }
 
   const handleExample = (example: string) => {
@@ -203,12 +234,10 @@ export function AIDesigner({ onUseDesign }: Props) {
       </div>
 
       {loading && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6 text-center text-gray-600">
-          <div className="inline-block animate-pulse">
-            Gemma is je doel aan het parsen, KEGG zoekt reacties…
-          </div>
-        </div>
+        <ProgressIndicator materialize={materialize} onCancel={cancel} />
       )}
+
+      <div ref={resultAnchorRef} />
 
       {result && (
         <div className="space-y-6">
