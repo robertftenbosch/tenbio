@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { designFromGoal } from '../../api/design'
 import { DesignFromGoalResponse } from '../../types/design'
 import { Part } from '../../types/parts'
+import { ChatPanel } from './ChatPanel'
 import { IntentCard } from './IntentCard'
 import { PathwayResult } from './PathwayResult'
 
@@ -238,6 +239,8 @@ export function AIDesigner({ onUseDesign }: Props) {
           )}
         </div>
       )}
+
+      <ChatPanel intent={result?.intent ?? null} />
     </div>
   )
 }
