@@ -9,11 +9,16 @@ import {
 
 const API_BASE = '/api/v1/design'
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal
+): Promise<T> {
   const r = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   })
   if (!r.ok) {
     let detail = `Request failed (${r.status})`
@@ -29,15 +34,17 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 export function designFromGoal(
-  req: DesignFromGoalRequest
+  req: DesignFromGoalRequest,
+  signal?: AbortSignal
 ): Promise<DesignFromGoalResponse> {
-  return postJson('/from-goal', req)
+  return postJson('/from-goal', req, signal)
 }
 
 export function designFromCompound(
-  req: DesignFromCompoundRequest
+  req: DesignFromCompoundRequest,
+  signal?: AbortSignal
 ): Promise<PathwayCandidatesResponse> {
-  return postJson('/from-compound', req)
+  return postJson('/from-compound', req, signal)
 }
 
 /**
