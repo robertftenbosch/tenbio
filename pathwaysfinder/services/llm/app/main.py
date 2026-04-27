@@ -1,7 +1,7 @@
 """FastAPI app for the LLM service.
 
 Wraps a local Ollama instance running Gemma (default: gemma3:9b; override
-via LLM_MODEL env var to e.g. gemma4:9b once available).
+via LLM_MODEL env var to e.g. gemma4:e4b once available).
 
 Endpoints:
 - POST /goal/parse  -> structured DesignIntent JSON
@@ -36,7 +36,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gemma3:9b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "gemma4:e4b")
 PRELOAD = os.environ.get("LLM_PRELOAD", "false").lower() in {"1", "true", "yes"}
 
 
